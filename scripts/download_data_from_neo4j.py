@@ -18,7 +18,8 @@ driver = GraphDatabase.driver(neo4j_bolt, auth=(neo4j_username, neo4j_password))
 session = driver.session()
 
 ## Pull a dataframe of all of the graph edges
-query = "match (disease) where (disease.category='biolink:Disease' or disease.category='biolink:PhenotypicFeature' or disease.category='biolink:DiseaseOrPhenotypicFeature') with collect(distinct disease.id) as disease_ids match (drug) where (drug.category='biolink:Drug' or drug.category='biolink:ChemicalSubstance') with collect(distinct drug.id) as drug_ids, disease_ids as disease_ids match (m1)-[]-(m2) where m1<>m2 and not (m1.id in drug_ids and m2.id in disease_ids) and not (m1.id in disease_ids and m2.id in drug_ids) with distinct m1 as node1, m2 as node2 return node1.id as source, node2.id as target"
+query = "match (disease) where (disease.category='biolink:Disease' or disease.category='biolink:PhenotypicFeature' or disease.category='biolink:DiseaseOrPhenotypicFeature') with collect(distinct disease.id) as disease_ids match (drug) where (drug.category='biolink:Drug' or drug.category='biolink:ChemicalSubstance') with collect(distinct drug.id) as drug_ids, disease_ids as disease_ids match (m1)<-[]-(m2) where m1<>m2 and not (m1.id in drug_ids and m2.id in disease_ids) and not (m1.id in disease_ids and m2.id in drug_ids) with distinct m1 as node1, m2 as node2 return node1.id as target, node2.id as source"
+
 res = session.run(query)
 KG_alledges = pd.DataFrame(res.data())
 KG_alledges.to_csv(output_path + '/graph_edges.txt', sep='\t', index=None)
