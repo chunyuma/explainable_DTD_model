@@ -312,7 +312,7 @@ if __name__ == "__main__":
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-#         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
         if use_gpu:
             scaler = amp.GradScaler(enabled=True) # scaler for mixed precision training
         all_train_loss = []
@@ -328,7 +328,7 @@ if __name__ == "__main__":
             if count > early_stop_n:
                 break
             train_loss, train_acc, val_loss, val_acc = train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val_batch)
-#             scheduler.step(val_loss)
+            scheduler.step(val_loss)
             all_train_loss += [train_loss]
             all_val_loss += [val_loss]
             writer.add_scalars('Loss', {'train': train_loss, 'val': val_loss}, epoch)
@@ -413,7 +413,7 @@ if __name__ == "__main__":
             writer = SummaryWriter(log_dir=os.path.join(args.output_folder, folder_name, f'{Kfold}foldcrossvalidation', f'fold{fold}', 'tensorboard_runs'))
             
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-#             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
             if use_gpu:
                 scaler = amp.GradScaler(enabled=True)
             all_train_loss = []
@@ -530,7 +530,7 @@ if __name__ == "__main__":
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-#         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
         if use_gpu:
             scaler = amp.GradScaler(enabled=True) # scaler for mixed precision training
         all_train_loss = []
