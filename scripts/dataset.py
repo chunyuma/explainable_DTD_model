@@ -16,7 +16,7 @@ import time
 import random
 
 class ProcessedDataset(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100):
+    def __init__(self, root, raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100):
         try:
             assert sum(train_val_test_size)==1
         except AssertionError:
@@ -24,8 +24,9 @@ class ProcessedDataset(InMemoryDataset):
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
-        self.tp_pairs = tp_pairs
-        self.tn_pairs = tn_pairs
+        self.treat_pairs = treat_pairs
+        self.not_treat_pairs = not_treat_pairs
+        self.contraindicated_for_pairs = contraindicated_for_pairs
         self.dim = dim
         self.train_val_test_size = train_val_test_size
         self.worker = 4 #multiprocessing.cpu_count()
@@ -63,14 +64,17 @@ class ProcessedDataset(InMemoryDataset):
         return init_embs
     
     @staticmethod
-    def _split_data(tp, tn, shuffle=True, batch_size=512):
-        tp['y'] = 1
-        tn['y'] = 0
+    def _split_data(class_data, shuffle=True, batch_size=512):
+        
+        for index in range(len(class_data)):
+            class_data[index] = class_data[index]['y'] = index
+
         tp_num = math.ceil((tp.shape[0]/(tp.shape[0]+tn.shape[0]))*batch_size)
         tn_num = math.floor((tn.shape[0]/(tp.shape[0]+tn.shape[0]))*batch_size)
         if shuffle==True:
-            tp = tp.sample(frac = 1)
-            tn = tn.sample(frac = 1)
+            for index in range(len(class_data)):
+                class_data[index] = class_data[index].sample(frac = 1)
+
         tp_batch = [list(tp.index)[x:x+tp_num] for x in range(0, len(tp.index), tp_num)]
         tn_batch = [list(tn.index)[x:x+tn_num] for x in range(0, len(tn.index), tn_num)]
         if len(tp_batch) == len(tn_batch):
@@ -105,30 +109,28 @@ class ProcessedDataset(InMemoryDataset):
         typeid = {key:index for index, key in enumerate(init_embs)}
         map_files = [idx_map, id_to_type, typeid]
         
-        tp_pairs_train, tp_pairs_val_test = train_test_split(self.tp_pairs,train_size=self.train_val_test_size[0])
-        tp_pairs_val, tp_pairs_test = train_test_split(tp_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
-        tn_pairs_train, tn_pairs_val_test = train_test_split(self.tn_pairs,train_size=self.train_val_test_size[0])
-        tn_pairs_val, tn_pairs_test = train_test_split(tn_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
+        treat_pairs_train, treat_pairs_val_test = train_test_split(self.treat_pairs,train_size=self.train_val_test_size[0])
+        treat_pairs_val, treat_pairs_test = train_test_split(treat_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
+        not_treat_pairs_train, not_treat_pairs_val_test = train_test_split(self.not_treat_pairs,train_size=self.train_val_test_size[0])
+        not_treat_pairs_val, not_treat_pairs_test = train_test_split(not_treat_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
+        contraindicated_for_pairs_train, contraindicated_for_pairs_val_test = train_test_split(self.contraindicated_for_pairs,train_size=self.train_val_test_size[0])
+        contraindicated_for_pairs_val, contraindicated_for_pairs_test = train_test_split(contraindicated_for_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
         
-        tp_pairs_train = tp_pairs_train.reset_index().drop(columns=['index'])
-        # tp_pairs_train['y'] = 1
-        tn_pairs_train = tn_pairs_train.reset_index().drop(columns=['index'])
-        # tn_pairs_train['y'] = 0
-        # pairs_train = pd.concat([tp_pairs_train,tn_pairs_train], axis=0).sample(frac=1).reset_index().drop(columns=['index'])
-        tp_pairs_val = tp_pairs_val.reset_index().drop(columns=['index'])
-        # tp_pairs_val['y'] = 1
-        tn_pairs_val = tn_pairs_val.reset_index().drop(columns=['index'])
-        # tn_pairs_val['y'] = 0
-        # pairs_val = pd.concat([tp_pairs_val,tn_pairs_val], axis=0).sample(frac=1).reset_index().drop(columns=['index'])
-        tp_pairs_test = tp_pairs_test.reset_index().drop(columns=['index'])
-        # tp_pairs_test['y'] = 1
-        tn_pairs_test = tn_pairs_test.reset_index().drop(columns=['index'])
-        # tn_pairs_test['y'] = 0
-        # pairs_test = pd.concat([tp_pairs_test,tn_pairs_test], axis=0).sample(frac=1).reset_index().drop(columns=['index'])
+        treat_pairs_train = treat_pairs_train.reset_index().drop(drop=True)
+        not_treat_pairs_train = not_treat_pairs_train.reset_index().drop(drop=True)
+        contraindicated_for_pairs_train = contraindicated_for_pairs_train.reset_index().drop(drop=True)
+
+        treat_pairs_val = treat_pairs_val.reset_index().drop(drop=True)
+        not_treat_pairs_val = not_treat_pairs_val.reset_index().drop(drop=True)
+        contraindicated_for_pairs_val = contraindicated_for_pairs_val.reset_index().drop(drop=True)
+        
+        treat_pairs_test = treat_pairs_test.reset_index().drop(drop=True)
+        not_treat_pairs_test = not_treat_pairs_test.reset_index().drop(drop=True)
+        contraindicated_for_pairs_test = contraindicated_for_pairs_test.reset_index().drop(drop=True)
 
         temp_batch = []
         os.mkdir(os.path.join(self.processed_dir, 'train_loaders'))
-        train_batch = self._split_data(tp=tp_pairs_train, tn=tn_pairs_train, batch_size=self.batch_size)
+        train_batch = self._split_data(class_data=[treat_pairs_train,not_treat_pairs_train,contraindicated_for_pairs_train], batch_size=self.batch_size)
         for i in trange(len(train_batch)):
 
             ## skip this batch if there is only one class in this batch

@@ -260,8 +260,9 @@ if __name__ == "__main__":
     
     raw_edges = pd.read_csv(args.data_path + '/graph_edges.txt', sep='\t', header=0)
     node_info = pd.read_csv(args.data_path + '/graph_nodes_label.txt', sep='\t', header=0)
-    tp_pairs = pd.read_csv(args.data_path + '/tp_pairs.txt', sep='\t', header=0)
-    tn_pairs = pd.read_csv(args.data_path + '/tn_pairs.txt', sep='\t', header=0)
+    treat_pairs = pd.read_csv(args.data_path + '/treat.txt', sep='\t', header=0)
+    not_treat_pairs = pd.read_csv(args.data_path + '/not_treat.txt', sep='\t', header=0)
+    contraindicated_for_pairs = pd.read_csv(args.data_path + '/contraindicated_for.txt', sep='\t', header=0)
 
     num_epochs = args.num_epochs
     batch_size = args.batch_size
@@ -290,9 +291,9 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'ProcessedDataset_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = ProcessedDataset(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, train_val_test_size=train_val_test_size, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
+        dataset = ProcessedDataset(root=processdata_path, raw_edges=raw_edges, node_info=node_info, treat_pairs=treat_pairs, not_treat_pairs=not_treat_pairs, contraindicated_for_pairs=contraindicated_for_pairs, train_val_test_size=train_val_test_size, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
         print('Pre-processing data completed', flush=True)
-        del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
+        del raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
         idx_map, id_to_type, typeid = dataset.get_mapfiles()
         train_batch, val_batch, test_batch = dataset.get_train_val_test()
