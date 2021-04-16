@@ -148,26 +148,31 @@ class GATConv(MessagePassing):
                                              self.out_channels, self.heads)
 
 class GAT(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers, dropout_p, num_node_types, num_head = 8, use_gpu=True, bias=True):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers, dropout_p, num_node_types, num_head = 8, use_gpu=True, bias=True, use_multiple_gpu=False):
         super(GAT, self).__init__()
 
         self.num_layers = num_layers
         self.dropout_p = dropout_p
         self.use_gpu = use_gpu
+        self.use_multiple_gpu = use_multiple_gpu
 
         self.transform_lins = torch.nn.ModuleList()
         self.convs = torch.nn.ModuleList()
-        if self.use_gpu is True:        
+        if self.use_gpu is True:
+            device = torch.device('cuda:0')
             for node_type in range(num_node_types):
-                node_type = node_type + 1
-                device = 'cuda:'+ str(node_type % torch.cuda.device_count())
                 self.transform_lins.append(torch.nn.Linear(in_channels,hidden_channels,bias=False).to(device))
             for layer in range(num_layers):
-                layer = layer + 1
-                device = 'cuda:'+ str(layer % torch.cuda.device_count())
+                if use_multiple_gpu is True:
+                    device = f"cuda:{layer % torch.cuda.device_count()}"
+                else:
+                    device = "cuda:0"
                 self.convs.append(GATConv(hidden_channels, hidden_channels, heads=num_head, dropout=dropout_p, concat=False, bias=bias).to(device))
             layer = layer + 1
-            device = 'cuda:'+ str(layer % torch.cuda.device_count())
+            if use_multiple_gpu is True:
+                device = f"cuda:{layer % torch.cuda.device_count()}"
+            else:
+                device = "cuda:0"
             self.lin = torch.nn.Linear(hidden_channels*2,out_channels,bias=False).to(device)
         else:
             for node_type in range(num_node_types):
@@ -187,13 +192,14 @@ class GAT(torch.nn.Module):
             self.attention_weights_list = []
 
         if self.use_gpu is True:
-            device = torch.device('cuda:0')
-#             x = x.to(device)
-#             x = torch.vstack([self.transform_lins[typeid[id_to_type[int(n_id[index])]]](x[index]) for index in range(len(n_id))])
-            x = torch.vstack([self.transform_lins[index](mat.to(device)) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
+
+            x = torch.vstack([self.transform_lins[index](mat.to('cuda:0')) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
             for i, (edge_index, size) in enumerate(adjs):
-                device = 'cuda:'+ str(i % torch.cuda.device_count())
-                
+                if self.use_multiple_gpu is True:
+                    device = f"cuda:{i % torch.cuda.device_count()}"
+                else:
+                    device = "cuda:0"
+                x = x.to(device)
                 x_target = x[:size[1]].to(device)
                 edge_index = edge_index.to(device)
                 if return_attention:
@@ -206,7 +212,10 @@ class GAT(torch.nn.Module):
                 x = F.dropout(x, p=self.dropout_p, training=self.training)
 
             i = i + 1
-            device = 'cuda:'+ str(i % torch.cuda.device_count())
+            if self.use_multiple_gpu is True:
+                device = f"cuda:{i % torch.cuda.device_count()}"
+            else:
+                device = "cuda:0"
             if link.shape[0]==1:
                 x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]]].view(1,-1),x[[torch.where(n_id==i)[0][0] for i in link[:,1]]].view(1,-1)], dim=1)
             else:
