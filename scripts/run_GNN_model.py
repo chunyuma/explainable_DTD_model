@@ -92,7 +92,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
         
         if batch_idx % print_every == 0 and not batch_idx == 0:
             elapsed = format_time(time.time() - batch_t0)
-            print(f"Batch {batch_idx} of {len(train_loader)}. Each batch costs around: {elapsed}.", flush=True)
+            print(f"Batch {batch_idx} of {len(train_loader)}. This batch costs around: {elapsed}.", flush=True)
         # pbar.update(1)
 
     train_loss = total_loss / len(train_loader)
@@ -242,14 +242,17 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, help="Data Forlder", default='~/work/explainable_DTD_model/mydata')
     parser.add_argument("--use_gpu", action="store_true", help="Use GPU to train model", default=False)
     parser.add_argument("--use_multiple_gpu", action="store_true", help="Use all GPUs on computer to train model", default=False)
+    parser.add_argument("--seed", type=float, help="Manually set initial seed for torch", default=1020)
     parser.add_argument("--learning_ratio", type=float, help="Learning ratio", default=0.001)
     parser.add_argument("--init_emb_size", type=int, help="Initial embedding", default=100)
+    parser.add_argument("--use_known_embedding", action="store_true", help="Use known inital embeeding", default=False)
     parser.add_argument("--num_epochs", type=int, help="Number of epochs to train model", default=50)
     parser.add_argument("--Kfold", type=int, help="Number of fold", default=10)
     parser.add_argument("--emb_size", type=int, help="Embedding vertor dimension", default=512)
     parser.add_argument("--batch_size", type=int, help="Batch size of training data", default=512)
     parser.add_argument("--num_layers", type=int, help="Number of GNN layers to train model", default=3)
     parser.add_argument("--patience", type=int, help="Number of epochs with no improvement after which learning rate will be reduced", default=10)
+    parser.add_argument("--factor", type=float, help="The factor for learning rate to be reduced", default=0.1)
     parser.add_argument("--early_stop_n", type=int, help="Early stop if validation loss doesn't further decrease after n step", default=50)
     parser.add_argument("--num_head", type=int, help="Number of head in GAT model", default=8)
     parser.add_argument("--print_every", type=int, help="How often to print training batch elapsed time", default=10)
@@ -263,7 +266,13 @@ if __name__ == "__main__":
     node_info = pd.read_csv(args.data_path + '/graph_nodes_label.txt', sep='\t', header=0)
     tp_pairs = pd.read_csv(args.data_path + '/tp_pairs.txt', sep='\t', header=0)
     tn_pairs = pd.read_csv(args.data_path + '/tn_pairs.txt', sep='\t', header=0)
-
+    if args.use_known_embedding:
+        with open(args.data_path + '/known_int_emb_dict.pkl','rb') as infile:
+            known_int_emb_dict = pickle.load(infile)
+    else:
+        known_int_emb_dict = None
+    
+    torch.manual_seed(args.seed)
     num_epochs = args.num_epochs
     batch_size = args.batch_size
     embedding_size = args.emb_size
@@ -275,6 +284,7 @@ if __name__ == "__main__":
     init_emb_size = args.init_emb_size
     print_every = args.print_every
     patience = args.patience
+    factor = args.factor
     early_stop_n = args.early_stop_n
     Kfold = args.Kfold
 
@@ -292,7 +302,7 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'ProcessedDataset_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = ProcessedDataset(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, train_val_test_size=train_val_test_size, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
+        dataset = ProcessedDataset(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, train_val_test_size=train_val_test_size, batch_size=batch_size, layers=num_layers, dim=init_emb_size, known_int_emb_dict=known_int_emb_dict)
         print('Pre-processing data completed', flush=True)
         del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
@@ -303,7 +313,7 @@ if __name__ == "__main__":
         test_loader = dataset.get_test_loader()
         
         model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
-        folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}'
+        folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
         except:
@@ -314,7 +324,7 @@ if __name__ == "__main__":
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, threshold=0.0001, threshold_mode='rel')
         if use_gpu:
             scaler = amp.GradScaler(enabled=True) # scaler for mixed precision training
         all_train_loss = []
@@ -342,7 +352,7 @@ if __name__ == "__main__":
                 count = 0
                 current_min_val_loss = val_loss
                 model_state_dict = model.state_dict()
-                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}.pt'   
+                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch+1:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}_factor{factor}.pt'   
 
         writer.close()
         ## save model and weights
@@ -373,7 +383,7 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'crossvalidation_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = MakeKFoldData(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, K=Kfold, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
+        dataset = MakeKFoldData(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, K=Kfold, batch_size=batch_size, layers=num_layers, dim=init_emb_size, use_multiple_gpu=use_multiple_gpu)
         print('Pre-processing data completed', flush=True)
         del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
@@ -394,7 +404,7 @@ if __name__ == "__main__":
             test_loader = dataset.get_test_loader(fold+1)
             
             model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
-            folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}'
+            folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
             
             try:
                 os.mkdir(os.path.join(args.output_folder, folder_name))
@@ -415,7 +425,7 @@ if __name__ == "__main__":
             writer = SummaryWriter(log_dir=os.path.join(args.output_folder, folder_name, f'{Kfold}foldcrossvalidation', f'fold{fold}', 'tensorboard_runs'))
             
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, threshold=0.0001, threshold_mode='rel')
             if use_gpu:
                 scaler = amp.GradScaler(enabled=True)
             all_train_loss = []
@@ -443,7 +453,7 @@ if __name__ == "__main__":
                     count = 0
                     current_min_val_loss = val_loss
                     model_state_dict = model.state_dict()
-                    model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}.pt'   
+                    model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}_factor{factor}.pt'   
 
             writer.close()
             ## save model and weights
@@ -500,7 +510,7 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'randompairs_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
+        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size, use_multiple_gpu=use_multiple_gpu)
         print('Pre-processing data completed', flush=True)
         del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
@@ -513,7 +523,7 @@ if __name__ == "__main__":
         rp_loader = dataset.get_rp_loader()
         
         model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
-        folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}'
+        folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
         except:
@@ -532,7 +542,7 @@ if __name__ == "__main__":
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, threshold=0.0001, threshold_mode='rel')
         if use_gpu:
             scaler = amp.GradScaler(enabled=True) # scaler for mixed precision training
         all_train_loss = []
@@ -560,7 +570,7 @@ if __name__ == "__main__":
                 count = 0
                 current_min_val_loss = val_loss
                 model_state_dict = model.state_dict()
-                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}.pt'
+                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}_factor{factor}.pt'
                 
         writer.close()
         ## save model and weights
