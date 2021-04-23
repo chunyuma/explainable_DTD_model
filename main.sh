@@ -6,7 +6,7 @@
 ## step2: generate training data
 echo 'running step2: generate training data'
 dataset_folder=~/work/explainable_DTD_model/data
-python ~/work/explainable_DTD_model/scripts/generate_training_data.py --treat ${dataset_folder}/training_data/semmed_tp.txt ${dataset_folder}/training_data/mychem_tp.txt ${dataset_folder}/training_data/ndf_tp.txt --not_treat ${dataset_folder}/training_data/semmed_tn.txt --contraindicated_for ${dataset_folder}/training_data/mychem_tn.txt ${dataset_folder}/training_data/ndf_tn.txt --graph ${dataset_folder}/graph_edges.txt --tncutoff "2" --tpcutoff "8" --output ${dataset_folder}
+python ~/work/explainable_DTD_model/scripts/generate_training_data.py --treat ${dataset_folder}/training_data/semmed_tp.txt ${dataset_folder}/training_data/mychem_tp.txt ${dataset_folder}/training_data/ndf_tp.txt --not_treat ${dataset_folder}/training_data/semmed_tn.txt --contraindicated_for ${dataset_folder}/training_data/mychem_tn.txt ${dataset_folder}/training_data/ndf_tn.txt --graph ${dataset_folder}/graph_edges.txt --tncutoff "1" --tpcutoff "8" --output ${dataset_folder}
 
 # step3: train GNN model
 #echo 'running step3: train GNN model'

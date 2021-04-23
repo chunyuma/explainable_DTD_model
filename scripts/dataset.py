@@ -67,23 +67,25 @@ class ProcessedDataset(InMemoryDataset):
     def _split_data(class_data, shuffle=True, batch_size=512):
         
         for index in range(len(class_data)):
-            class_data[index] = class_data[index]['y'] = index
+            class_data[index]['y'] = index
 
-        tp_num = math.ceil((tp.shape[0]/(tp.shape[0]+tn.shape[0]))*batch_size)
-        tn_num = math.floor((tn.shape[0]/(tp.shape[0]+tn.shape[0]))*batch_size)
+        num_list = []
+        for index in range(len(class_data)-1):
+            num_list.append(math.ceil((class_data[index].shape[0]/pd.concat(class_data).shape[0])*batch_size))
+        num_list.append(batch_size-sum(num_list))
+        
         if shuffle==True:
             for index in range(len(class_data)):
                 class_data[index] = class_data[index].sample(frac = 1)
 
-        tp_batch = [list(tp.index)[x:x+tp_num] for x in range(0, len(tp.index), tp_num)]
-        tn_batch = [list(tn.index)[x:x+tn_num] for x in range(0, len(tn.index), tn_num)]
-        if len(tp_batch) == len(tn_batch):
-            pass
-        elif len(tp_batch) > len(tn_batch):
-            tn_batch += [[]]
-        else:
-            tp_batch += [[]]
-        batch = [pd.concat([tp.loc[tp_batch[i],],tn.loc[tn_batch[i],]],axis=0).sample(frac=1).reset_index().drop(columns=['index']) for i in range(len(tp_batch))]
+        batch = []
+        count = [0]*len(class_data)
+        max_iter = max([math.ceil(class_data[index].shape[0]/num_list[index]) for index in range(len(class_data))])
+        for _ in range(max_iter):
+            prev = count
+            count = [count[index1]+num for index1, num in enumerate(num_list)]
+            batch += [pd.concat([class_data[index2].iloc[prev:count[index2],:] for index2 in range(len(class_data))],axis=0).sample(frac=1).reset_index().drop(columns=['index'])]
+                
         return batch
 
     def process(self):
@@ -94,103 +96,101 @@ class ProcessedDataset(InMemoryDataset):
         idx_map = {j: i for i, j in enumerate(all_nodes)}
         edges = np.array(list(map(idx_map.get, np.array(self.raw_edges).flatten())), dtype=np.int32).reshape(np.array(self.raw_edges).shape)
         
-#         category_array, category_map = self._encode_onehot(node_info.category)
         init_embs = self._generate_init_emb(idx_map, node_info, dim=self.dim)
-#         features = torch.tensor(category_array, dtype=torch.float32)
-#         map_id = torch.tensor(list(map(idx_map.get, list(node_info.id))), dtype=torch.int32)
         edge_index = torch.tensor(edges.T, dtype=torch.long)
-#         data = Data(feat=features, edge_index=edge_index, map_id=map_id)
-#         x = torch.vstack([init_embs[key][0] for key in init_embs])
-#         indexes = torch.hstack([init_embs[key][1] for key in init_embs])
-#         x = x[indexes.sort().indices]
         data = Data(feat=init_embs, edge_index=edge_index)
-#         map_files = [idx_map, category_map]
         id_to_type = {idx_map[node_info['id'][index]]:node_info['category'][index] for index in range(node_info.shape[0])}
         typeid = {key:index for index, key in enumerate(init_embs)}
         map_files = [idx_map, id_to_type, typeid]
-        
-        treat_pairs_train, treat_pairs_val_test = train_test_split(self.treat_pairs,train_size=self.train_val_test_size[0])
-        treat_pairs_val, treat_pairs_test = train_test_split(treat_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
-        not_treat_pairs_train, not_treat_pairs_val_test = train_test_split(self.not_treat_pairs,train_size=self.train_val_test_size[0])
-        not_treat_pairs_val, not_treat_pairs_test = train_test_split(not_treat_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
-        contraindicated_for_pairs_train, contraindicated_for_pairs_val_test = train_test_split(self.contraindicated_for_pairs,train_size=self.train_val_test_size[0])
-        contraindicated_for_pairs_val, contraindicated_for_pairs_test = train_test_split(contraindicated_for_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
-        
-        treat_pairs_train = treat_pairs_train.reset_index().drop(drop=True)
-        not_treat_pairs_train = not_treat_pairs_train.reset_index().drop(drop=True)
-        contraindicated_for_pairs_train = contraindicated_for_pairs_train.reset_index().drop(drop=True)
 
-        treat_pairs_val = treat_pairs_val.reset_index().drop(drop=True)
-        not_treat_pairs_val = not_treat_pairs_val.reset_index().drop(drop=True)
-        contraindicated_for_pairs_val = contraindicated_for_pairs_val.reset_index().drop(drop=True)
         
-        treat_pairs_test = treat_pairs_test.reset_index().drop(drop=True)
-        not_treat_pairs_test = not_treat_pairs_test.reset_index().drop(drop=True)
-        contraindicated_for_pairs_test = contraindicated_for_pairs_test.reset_index().drop(drop=True)
+        random_state1 = np.random.RandomState(int(time.time()))
+        self.treat_pairs['y'] = 0
+        self.not_treat_pairs['y'] = 1
+        self.contraindicated_for_pairs['y'] = 2
+        all_pairs = pd.concat([self.treat_pairs,self.not_treat_pairs,self.contraindicated_for_pairs]).reset_index(drop=True)
+        train_index, val_test_index = train_test_split(np.array(list(all_pairs.index)), train_size=self.train_val_test_size[0], random_state=random_state1, shuffle=True, stratify=np.array(list(all_pairs['y'])))
+        
+        train_pairs = all_pairs.loc[list(train_index),:].reset_index(drop=True)
+        val_test_pairs = all_pairs.loc[list(val_test_index),:].reset_index(drop=True)
 
-        temp_batch = []
+        val_index, test_index = train_test_split(np.array(list(val_test_pairs.index)), train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]), random_state=random_state1, shuffle=True, stratify=np.array(list(val_test_pairs['y'])))
+        
+        val_pairs = val_test_pairs.loc[list(val_index),:].reset_index(drop=True)
+        test_pairs = val_test_pairs.loc[list(test_index),:].reset_index(drop=True)
+        
+        
+        N = train_pairs.shape[0]//self.batch_size
+        # seeds random state from time
+        random_state2 = np.random.RandomState(int(time.time()))
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
+
+        train_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'train_loaders'))
-        train_batch = self._split_data(class_data=[treat_pairs_train,not_treat_pairs_train,contraindicated_for_pairs_train], batch_size=self.batch_size)
+        for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
+            train_batch += [train_pairs.loc[list(index),:].reset_index(drop=True)]
         for i in trange(len(train_batch)):
 
-            ## skip this batch if there is only one class in this batch
-            if len(set(train_batch[i]['y'])) == 1:
-                temp_batch += [train_batch[i]]
-                del train_batch[i]
-                continue
             batch_data = train_batch[i]
-            train_set = set()
-            train_set.update(set(batch_data.source))
-            train_set.update(set(batch_data.target))
-            train_idx=torch.tensor(list(map(idx_map.get, train_set)), dtype=torch.int32)
-            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=train_idx, sizes=self.layer_size, batch_size=len(train_idx), shuffle=False, num_workers=self.worker):
+            data_set = set()
+            data_set.update(set(batch_data.source))
+            data_set.update(set(batch_data.target))
+            data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
-                train_loader = (n_id, adjs)
+                loader = (n_id, adjs)
             filename = 'train_loader' + '_' + str(i) + '.pkl'
             with open(os.path.join(self.processed_dir, 'train_loaders', filename), 'wb') as output:
-                pickle.dump(train_loader, output)
+                pickle.dump(loader, output)
+        
 
+        N = val_pairs.shape[0]//self.batch_size
+        # seeds random state from time
+        random_state2 = np.random.RandomState(int(time.time()))
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
+
+        val_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'val_loaders'))
-        val_batch = self._split_data(tp=tp_pairs_val, tn=tn_pairs_val, batch_size=self.batch_size)
+        for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
+            val_batch += [val_pairs.loc[list(index),:].reset_index(drop=True)]
         for i in trange(len(val_batch)):
 
-            ## skip this batch if there is only one class in this batch
-            if len(set(val_batch[i]['y'])) == 1:
-                temp_batch += [val_batch[i]]
-                del val_batch[i]
-                continue
             batch_data = val_batch[i]
-            val_set = set()
-            val_set.update(set(batch_data.source))
-            val_set.update(set(batch_data.target))
-            val_idx=torch.tensor(list(map(idx_map.get, val_set)), dtype=torch.int32)
-            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=val_idx, sizes=self.layer_size, batch_size=len(val_idx), shuffle=False, num_workers=self.worker):
+            data_set = set()
+            data_set.update(set(batch_data.source))
+            data_set.update(set(batch_data.target))
+            data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
-                val_loader = (n_id, adjs)
+                loader = (n_id, adjs)
             filename = 'val_loader' + '_' + str(i) + '.pkl'
             with open(os.path.join(self.processed_dir, 'val_loaders', filename), 'wb') as output:
-                pickle.dump(val_loader, output)
+                pickle.dump(loader, output)
+                
 
+        N = test_pairs.shape[0]//self.batch_size
+        # seeds random state from time
+        random_state2 = np.random.RandomState(int(time.time()))
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
+
+        test_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'test_loaders'))
-        test_batch = self._split_data(tp=tp_pairs_test, tn=tn_pairs_test, batch_size=self.batch_size)
-        test_batch += temp_batch ## put the inblanced train/val batch to test batch list
+        for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
+            test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
         for i in trange(len(test_batch)):
 
-            # ## skip this batch if there is only one class in this batch
-            # if len(set(test_batch[i]['y'])) == 1:
-            #     del test_batch[i]
-            #     continue
             batch_data = test_batch[i]
-            test_set = set()
-            test_set.update(set(batch_data.source))
-            test_set.update(set(batch_data.target))
-            test_idx=torch.tensor(list(map(idx_map.get, test_set)), dtype=torch.int32)
-            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=test_idx, sizes=self.layer_size, batch_size=len(test_idx), shuffle=False, num_workers=self.worker):
+            data_set = set()
+            data_set.update(set(batch_data.source))
+            data_set.update(set(batch_data.target))
+            data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
-                test_loader = (n_id, adjs)
+                loader = (n_id, adjs)
             filename = 'test_loader' + '_' + str(i) + '.pkl'
             with open(os.path.join(self.processed_dir, 'test_loaders', filename), 'wb') as output:
-                pickle.dump(test_loader, output)
+                pickle.dump(loader, output)
+
 
         train_val_test = [train_batch, val_batch, test_batch]
         
@@ -228,12 +228,13 @@ class ProcessedDataset(InMemoryDataset):
 
 
 class MakeKFoldData(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100):
+    def __init__(self, root, raw_edges, node_info,  treat_pairs, not_treat_pairs, contraindicated_for_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100):
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
-        self.tp_pairs = tp_pairs
-        self.tn_pairs = tn_pairs
+        self.treat_pairs = treat_pairs
+        self.not_treat_pairs = not_treat_pairs
+        self.contraindicated_for_pairs = contraindicated_for_pairs
         self.dim = dim
         self.K = K
         self.worker = 4 #multiprocessing.cpu_count()
@@ -265,6 +266,7 @@ class MakeKFoldData(InMemoryDataset):
         return init_embs
     
     def process(self):
+
         all_nodes = set()
         all_nodes.update(set(self.raw_edges.source))
         all_nodes.update(set(self.raw_edges.target))
@@ -283,9 +285,10 @@ class MakeKFoldData(InMemoryDataset):
         random_state1 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
         cv1 = ms.StratifiedKFold(n_splits=self.K, random_state=random_state1, shuffle=True)
-        self.tp_pairs['y'] = 1
-        self.tn_pairs['y'] = 0
-        all_pairs = pd.concat([self.tp_pairs,self.tn_pairs]).reset_index(drop=True)
+        self.treat_pairs['y'] = 0
+        self.not_treat_pairs['y'] = 1
+        self.contraindicated_for_pairs['y'] = 2
+        all_pairs = pd.concat([self.treat_pairs,self.not_treat_pairs,self.contraindicated_for_pairs]).reset_index(drop=True)
         for fold, (train_index, test_index) in enumerate(cv1.split(np.array(list(all_pairs.index)), np.array(all_pairs['y']))):
             train_index, val_index = train_test_split(train_index, test_size=1/9, random_state=random_state1, shuffle=True, stratify=np.array(all_pairs.loc[list(train_index),'y']))
             train_pairs = all_pairs.loc[list(train_index),:].reset_index(drop=True)
@@ -402,12 +405,13 @@ class MakeKFoldData(InMemoryDataset):
     
 
 class MakeKRandomPairs(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, N=10000, transform=None, pre_transform=None, batch_size=512, layers=3, dim=100):
+    def __init__(self, root, raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs, N=10000, transform=None, pre_transform=None, batch_size=512, layers=3, dim=100):
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
-        self.tp_pairs = tp_pairs
-        self.tn_pairs = tn_pairs
+        self.treat_pairs = treat_pairs
+        self.not_treat_pairs = not_treat_pairs
+        self.contraindicated_for_pairs = contraindicated_for_pairs
         self.dim = dim
         self.N = N
         self.worker = 4 #multiprocessing.cpu_count()
@@ -476,19 +480,19 @@ class MakeKRandomPairs(InMemoryDataset):
         
         # seeds random state from time
         random_state1 = np.random.RandomState(int(time.time()))
-        self.tp_pairs['y'] = 1
-        self.tn_pairs['y'] = 0
-        all_pairs = pd.concat([self.tp_pairs,self.tn_pairs]).reset_index(drop=True)
-        train_index, test_index = train_test_split(np.array(list(all_pairs.index)), train_size=0.9, random_state=random_state1, shuffle=True, stratify=np.array(list(all_pairs['y'])))
+        self.treat_pairs['y'] = 0
+        self.not_treat_pairs['y'] = 1
+        self.contraindicated_for_pairs['y'] = 2
+        all_pairs = pd.concat([self.treat_pairs,self.not_treat_pairs,self.contraindicated_for_pairs]).reset_index(drop=True)
+        train_index, val_index = train_test_split(np.array(list(all_pairs.index)), train_size=0.9, random_state=random_state1, shuffle=True, stratify=np.array(list(all_pairs['y'])))
         
         train_pairs = all_pairs.loc[list(train_index),:].reset_index(drop=True)
-        test_pairs = all_pairs.loc[list(test_index),:].reset_index(drop=True)
+        val_pairs = all_pairs.loc[list(val_index),:].reset_index(drop=True)
         
         
         N = train_pairs.shape[0]//self.batch_size
         # seeds random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
 
         train_batch = list()
@@ -510,18 +514,17 @@ class MakeKRandomPairs(InMemoryDataset):
                 pickle.dump(loader, output)
         
         
-        N = test_pairs.shape[0]//self.batch_size
+        N = val_pairs.shape[0]//self.batch_size
         # seeds random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)  
 
         
-        test_batch = list()
-        os.mkdir(os.path.join(self.processed_dir, 'test_loaders'))
-        for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
-            test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
-        for i in trange(len(test_batch)):
+        val_batch = list()
+        os.mkdir(os.path.join(self.processed_dir, 'val_loaders'))
+        for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
+            val_batch += [val_pairs.loc[list(index),:].reset_index(drop=True)]
+        for i in trange(len(val_batch)):
 
             batch_data = test_batch[i]
             data_set = set()
@@ -531,8 +534,8 @@ class MakeKRandomPairs(InMemoryDataset):
             for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
                 loader = (n_id, adjs)
-            filename = 'test_loader' + '_' + str(i) + '.pkl'
-            with open(os.path.join(self.processed_dir, 'test_loaders', filename), 'wb') as output:
+            filename = 'val_loader' + '_' + str(i) + '.pkl'
+            with open(os.path.join(self.processed_dir, 'val_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
         
         # generate random pairs of drug and disease
@@ -540,19 +543,18 @@ class MakeKRandomPairs(InMemoryDataset):
         drug_list = [node_id for node_id, node_type in id_to_type.items() if node_type=='chemical_substance']
         random_pairs = self._rand_rate(self.N, drug_list, disease_list, idx_map)
         
-        N = self.tp_pairs.shape[0]//self.batch_size
+        N = self.treat_pairs.shape[0]//self.batch_size
         # seeds random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
 
-        tp_batch = list()
-        os.mkdir(os.path.join(self.processed_dir, 'tp_loaders'))
-        for _, index in cv2.split(np.array(list(self.tp_pairs.index)), [1]*self.tp_pairs.shape[0]):
-            tp_batch += [self.tp_pairs.loc[list(index),:].reset_index(drop=True)]
-        for i in trange(len(tp_batch)):
+        treat_pairs_batch = list()
+        os.mkdir(os.path.join(self.processed_dir, 'treat_pairs_loaders'))
+        for _, index in cv2.split(np.array(list(self.treat_pairs.index)), [0]*self.treat_pairs.shape[0]):
+            treat_pairs_batch += [self.treat_pairs.loc[list(index),:].reset_index(drop=True)]
+        for i in trange(len(treat_pairs_batch)):
 
-            batch_data = tp_batch[i]
+            batch_data = treat_pairs_batch[i]
             data_set = set()
             data_set.update(set(batch_data.source))
             data_set.update(set(batch_data.target))
@@ -560,23 +562,22 @@ class MakeKRandomPairs(InMemoryDataset):
             for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
                 loader = (n_id, adjs)
-            filename = 'tp_loader' + '_' + str(i) + '.pkl'
-            with open(os.path.join(self.processed_dir, 'tp_loaders', filename), 'wb') as output:
+            filename = 'treat_pairs_loader' + '_' + str(i) + '.pkl'
+            with open(os.path.join(self.processed_dir, 'treat_pairs_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
                 
-        N = self.tn_pairs.shape[0]//self.batch_size
+        N = self.not_treat_pairs.shape[0]//self.batch_size
         # seeds random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
 
-        tn_batch = list()
-        os.mkdir(os.path.join(self.processed_dir, 'tn_loaders'))
-        for _, index in cv2.split(np.array(list(self.tn_pairs.index)), [1]*self.tn_pairs.shape[0]):
-            tn_batch += [self.tn_pairs.loc[list(index),:].reset_index(drop=True)]
-        for i in trange(len(tn_batch)):
+        not_treat_pairs_batch = list()
+        os.mkdir(os.path.join(self.processed_dir, 'not_treat_pairs_loaders'))
+        for _, index in cv2.split(np.array(list(self.not_treat_pairs.index)), [1]*self.not_treat_pairs.shape[0]):
+            not_treat_pairs_batch += [self.not_treat_pairs.loc[list(index),:].reset_index(drop=True)]
+        for i in trange(len(not_treat_pairs_batch)):
 
-            batch_data = tn_batch[i]
+            batch_data = not_treat_pairs_batch[i]
             data_set = set()
             data_set.update(set(batch_data.source))
             data_set.update(set(batch_data.target))
@@ -584,14 +585,36 @@ class MakeKRandomPairs(InMemoryDataset):
             for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
                 loader = (n_id, adjs)
-            filename = 'tn_loader' + '_' + str(i) + '.pkl'
-            with open(os.path.join(self.processed_dir, 'tn_loaders', filename), 'wb') as output:
+            filename = 'not_treat_pairs_loader' + '_' + str(i) + '.pkl'
+            with open(os.path.join(self.processed_dir, 'not_treat_pairs_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
-                       
+
+        N = self.contraindicated_for_pairs.shape[0]//self.batch_size
+        # seeds random state from time
+        random_state2 = np.random.RandomState(int(time.time()))
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
+
+        contraindicated_for_pairs_batch = list()
+        os.mkdir(os.path.join(self.processed_dir, 'contraindicated_for_pairs_loaders'))
+        for _, index in cv2.split(np.array(list(self.contraindicated_for_pairs.index)), [1]*self.contraindicated_for_pairs.shape[0]):
+            contraindicated_for_pairs_batch += [self.contraindicated_for_pairs.loc[list(index),:].reset_index(drop=True)]
+        for i in trange(len(contraindicated_for_pairs_batch)):
+
+            batch_data = contraindicated_for_pairs_batch[i]
+            data_set = set()
+            data_set.update(set(batch_data.source))
+            data_set.update(set(batch_data.target))
+            data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
+                adjs = [(adj.edge_index,adj.size) for adj in adjs]
+                loader = (n_id, adjs)
+            filename = 'contraindicated_for_pairs_loader' + '_' + str(i) + '.pkl'
+            with open(os.path.join(self.processed_dir, 'contraindicated_for_pairs_loaders', filename), 'wb') as output:
+                pickle.dump(loader, output)
+                
         N = random_pairs.shape[0]//self.batch_size
         # seeds random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
 
         rp_batch = list()
@@ -612,7 +635,7 @@ class MakeKRandomPairs(InMemoryDataset):
             with open(os.path.join(self.processed_dir, 'rp_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
                 
-        batch_set = [train_batch, test_batch, tp_batch, tn_batch, rp_batch]
+        batch_set = [train_batch, val_batch, treat_pairs_batch, not_treat_pairs_batch, contraindicated_for_pairs_batch, rp_batch]
         
         with open(os.path.join(self.processed_dir, 'batch_set.pkl'), 'wb') as output:
             pickle.dump(batch_set, output)
@@ -642,14 +665,18 @@ class MakeKRandomPairs(InMemoryDataset):
         test_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'test_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
         return DataLoader(DataWrapper(test_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
     
-    def get_tp_loader(self):
-        tp_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'tp_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
-        return DataLoader(DataWrapper(tp_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
+    def get_treat_pairs_loader(self):
+        treat_pairs_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'treat_pairs_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
+        return DataLoader(DataWrapper(treat_pairs_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
     
-    def get_tn_loader(self):
-        tn_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'tn_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
-        return DataLoader(DataWrapper(tn_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
+    def get_not_treat_pairs_loader(self):
+        not_treat_pairs_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'not_treat_pairs_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
+        return DataLoader(DataWrapper(not_treat_pairs_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
 
+    def get_contraindicated_for_pairs_loader(self):
+        contraindicated_for_pairs_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'contraindicated_for_pairs_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
+        return DataLoader(DataWrapper(contraindicated_for_pairs_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
+    
     def get_rp_loader(self):
         rp_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'rp_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
         return DataLoader(DataWrapper(rp_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
