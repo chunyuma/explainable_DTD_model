@@ -242,7 +242,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, help="Data Forlder", default='~/work/explainable_DTD_model/mydata')
     parser.add_argument("--use_gpu", action="store_true", help="Use GPU to train model", default=False)
     parser.add_argument("--use_multiple_gpu", action="store_true", help="Use all GPUs on computer to train model", default=False)
-    parser.add_argument("--seed", type=float, help="Manually set initial seed for torch", default=1020)
+    parser.add_argument("--seed", type=float, help="Manually set initial seed for pytorch", default=1020)
     parser.add_argument("--learning_ratio", type=float, help="Learning ratio", default=0.001)
     parser.add_argument("--init_emb_size", type=int, help="Initial embedding", default=100)
     parser.add_argument("--use_known_embedding", action="store_true", help="Use known inital embeeding", default=False)
@@ -311,8 +311,10 @@ if __name__ == "__main__":
         train_loader = dataset.get_train_loader()
         val_loader = dataset.get_val_loader()
         test_loader = dataset.get_test_loader()
+        init_emb = data.feat
+        type_init_emb_size = [init_emb[key][0].shape[1] for key,value in init_emb.items()]
         
-        model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
+        model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
         folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
@@ -320,7 +322,6 @@ if __name__ == "__main__":
             pass
         writer = SummaryWriter(log_dir=os.path.join(args.output_folder, folder_name, 'tensorboard_runs'))
         
-        init_emb = data.feat
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -352,7 +353,7 @@ if __name__ == "__main__":
                 count = 0
                 current_min_val_loss = val_loss
                 model_state_dict = model.state_dict()
-                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch+1:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}_factor{factor}.pt'   
+                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch+1:04d}_val_loss{current_min_val_loss:.4f}_patience{patience}_factor{factor}.pt'   
 
         writer.close()
         ## save model and weights
@@ -369,7 +370,7 @@ if __name__ == "__main__":
     
         print("")
         print('#### Load in the best model', flush=True)
-        model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
+        model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
         model.load_state_dict(torch.load(os.path.join(args.output_folder, folder_name, model_name))['model_state_dict'])
 
         print("")
@@ -389,6 +390,7 @@ if __name__ == "__main__":
         data = dataset.get_dataset()
         idx_map, id_to_type, typeid = dataset.get_mapfiles()
         init_emb = data.feat
+        type_init_emb_size = [init_emb[key][0].shape[1] for key,value in init_emb.items()]
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         tprs = []
@@ -403,7 +405,7 @@ if __name__ == "__main__":
             val_loader = dataset.get_val_loader(fold+1)
             test_loader = dataset.get_test_loader(fold+1)
             
-            model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
+            model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
             folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
             
             try:
@@ -453,7 +455,7 @@ if __name__ == "__main__":
                     count = 0
                     current_min_val_loss = val_loss
                     model_state_dict = model.state_dict()
-                    model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}_factor{factor}.pt'   
+                    model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.4f}_patience{patience}_factor{factor}.pt'   
 
             writer.close()
             ## save model and weights
@@ -462,7 +464,7 @@ if __name__ == "__main__":
             
             print("")
             print('#### Load in the best model', flush=True)
-            model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
+            model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
             model.load_state_dict(torch.load(os.path.join(args.output_folder, folder_name, f'{Kfold}foldcrossvalidation', f'fold{fold+1}', model_name))['model_state_dict'])
 
             labels, preds, probas = predict_res(test_loader, test_batch, use_gpu=use_gpu)
@@ -521,8 +523,10 @@ if __name__ == "__main__":
         tp_loader = dataset.get_tp_loader()
         tn_loader = dataset.get_tn_loader()
         rp_loader = dataset.get_rp_loader()
+        init_emb = data.feat
+        type_init_emb_size = [init_emb[key][0].shape[1] for key,value in init_emb.items()]
         
-        model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
+        model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
         folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
@@ -538,7 +542,6 @@ if __name__ == "__main__":
             pass
         writer = SummaryWriter(log_dir=os.path.join(args.output_folder, folder_name, 'randompairs', 'tensorboard_runs'))
 
-        init_emb = data.feat
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -570,7 +573,7 @@ if __name__ == "__main__":
                 count = 0
                 current_min_val_loss = val_loss
                 model_state_dict = model.state_dict()
-                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}_factor{factor}.pt'
+                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.4f}_patience{patience}_factor{factor}.pt'
                 
         writer.close()
         ## save model and weights
@@ -587,7 +590,7 @@ if __name__ == "__main__":
     
         print("")
         print('#### Load in the best model', flush=True)
-        model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
+        model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
         model.load_state_dict(torch.load(os.path.join(args.output_folder, folder_name, 'randompairs', model_name))['model_state_dict'])
         
         # Get random pairs cutoff rates

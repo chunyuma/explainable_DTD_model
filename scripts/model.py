@@ -148,7 +148,7 @@ class GATConv(MessagePassing):
                                              self.out_channels, self.heads)
 
 class GAT(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers, dropout_p, num_node_types, num_head = 8, use_gpu=True, bias=True, use_multiple_gpu=False):
+    def __init__(self, type_in_channels, hidden_channels, out_channels, num_layers, dropout_p, num_head = 8, use_gpu=True, bias=True, use_multiple_gpu=False):
         super(GAT, self).__init__()
 
         self.num_layers = num_layers
@@ -160,8 +160,8 @@ class GAT(torch.nn.Module):
         self.convs = torch.nn.ModuleList()
         if self.use_gpu is True:
             device = torch.device('cuda:0')
-            for node_type in range(num_node_types):
-                self.transform_lins.append(torch.nn.Linear(in_channels,hidden_channels,bias=False).to(device))
+            for index in range(len(type_in_channels)):
+                self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False).to(device))
             for layer in range(num_layers):
                 if use_multiple_gpu is True:
                     device = f"cuda:{layer % torch.cuda.device_count()}"
@@ -175,8 +175,8 @@ class GAT(torch.nn.Module):
                 device = "cuda:0"
             self.lin = torch.nn.Linear(hidden_channels*2,out_channels,bias=False).to(device)
         else:
-            for node_type in range(num_node_types):
-                self.transform_lins.append(torch.nn.Linear(in_channels,hidden_channels,bias=False))
+            for index in range(len(type_in_channels)):
+                self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False))
             for _ in range(num_layers):
                 self.convs.append(GATConv(hidden_channels, hidden_channels, heads=num_head, dropout=dropout_p, concat=False, bias=bias))
             self.lin = torch.nn.Linear(hidden_channels*2,out_channels,bias=False)
@@ -225,7 +225,6 @@ class GAT(torch.nn.Module):
             x = self.lin(x).squeeze(1) 
 
         else:
-#             x = torch.vstack([self.transform_lins[typeid[id_to_type[int(n_id[index])]]](x[index]) for index in range(len(n_id))])
             x = torch.vstack([self.transform_lins[index](mat) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
             for i, (edge_index, size) in enumerate(adjs):
                 x_target = x[:size[1]]

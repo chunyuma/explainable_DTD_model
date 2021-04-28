@@ -19,9 +19,9 @@ class ProcessedDataset(InMemoryDataset):
     def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
         if not sum(train_val_test_size)==1:
             raise AssertionError("The sum of percents in train_val_test_size should be 1")
-        if known_int_emb_dict is not None:
-            if not all([len(known_int_emb_dict[key])==dim for key, value in known_int_emb_dict.items()]):
-                raise AssertionError(f"At least one known inital embedding is not eqaul to the dimension of intial embedding you set which is {dim}")
+#         if known_int_emb_dict is not None:
+#             if not all([len(known_int_emb_dict[key])==dim for key, value in known_int_emb_dict.items()]):
+#                 raise AssertionError(f"At least one known inital embedding is not eqaul to the dimension of intial embedding you set which is {dim}")
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
@@ -107,105 +107,104 @@ class ProcessedDataset(InMemoryDataset):
         idx_map = {j: i for i, j in enumerate(all_nodes)}
         edges = np.array(list(map(idx_map.get, np.array(self.raw_edges).flatten())), dtype=np.int32).reshape(np.array(self.raw_edges).shape)
         
-#         category_array, category_map = self._encode_onehot(node_info.category)
+        ## generate initial embedding vectors for each category
         init_embs = self._generate_init_emb(idx_map, node_info, dim=self.dim, known_int_emb_dict=self.known_int_emb_dict)
-#         features = torch.tensor(category_array, dtype=torch.float32)
-#         map_id = torch.tensor(list(map(idx_map.get, list(node_info.id))), dtype=torch.int32)
+        ## generate edge index matrix
         edge_index = torch.tensor(edges.T, dtype=torch.long)
-#         data = Data(feat=features, edge_index=edge_index, map_id=map_id)
-#         x = torch.vstack([init_embs[key][0] for key in init_embs])
-#         indexes = torch.hstack([init_embs[key][1] for key in init_embs])
-#         x = x[indexes.sort().indices]
         data = Data(feat=init_embs, edge_index=edge_index)
-#         map_files = [idx_map, category_map]
         id_to_type = {idx_map[node_info['id'][index]]:node_info['category'][index] for index in range(node_info.shape[0])}
         typeid = {key:index for index, key in enumerate(init_embs)}
         map_files = [idx_map, id_to_type, typeid]
         
-        tp_pairs_train, tp_pairs_val_test = train_test_split(self.tp_pairs,train_size=self.train_val_test_size[0])
-        tp_pairs_val, tp_pairs_test = train_test_split(tp_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
-        tn_pairs_train, tn_pairs_val_test = train_test_split(self.tn_pairs,train_size=self.train_val_test_size[0])
-        tn_pairs_val, tn_pairs_test = train_test_split(tn_pairs_val_test,train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]))
+        ## split dataset to training, validation and test according 
+        # seed random state from time
+        random_state1 = np.random.RandomState(int(time.time()))
+        self.tp_pairs['y'] = 1
+        self.tn_pairs['y'] = 0
+        all_pairs = pd.concat([self.tp_pairs,self.tn_pairs]).reset_index(drop=True)
+        train_index, val_test_index = train_test_split(np.array(list(all_pairs.index)), train_size=self.train_val_test_size[0], random_state=random_state1, shuffle=True, stratify=np.array(list(all_pairs['y'])))        
+        train_pairs = all_pairs.loc[list(train_index),:].reset_index(drop=True)
+        val_test_pairs = all_pairs.loc[list(val_test_index),:].reset_index(drop=True)
         
-        tp_pairs_train = tp_pairs_train.reset_index().drop(columns=['index'])
-        # tp_pairs_train['y'] = 1
-        tn_pairs_train = tn_pairs_train.reset_index().drop(columns=['index'])
-        # tn_pairs_train['y'] = 0
-        # pairs_train = pd.concat([tp_pairs_train,tn_pairs_train], axis=0).sample(frac=1).reset_index().drop(columns=['index'])
-        tp_pairs_val = tp_pairs_val.reset_index().drop(columns=['index'])
-        # tp_pairs_val['y'] = 1
-        tn_pairs_val = tn_pairs_val.reset_index().drop(columns=['index'])
-        # tn_pairs_val['y'] = 0
-        # pairs_val = pd.concat([tp_pairs_val,tn_pairs_val], axis=0).sample(frac=1).reset_index().drop(columns=['index'])
-        tp_pairs_test = tp_pairs_test.reset_index().drop(columns=['index'])
-        # tp_pairs_test['y'] = 1
-        tn_pairs_test = tn_pairs_test.reset_index().drop(columns=['index'])
-        # tn_pairs_test['y'] = 0
-        # pairs_test = pd.concat([tp_pairs_test,tn_pairs_test], axis=0).sample(frac=1).reset_index().drop(columns=['index'])
-
-        temp_batch = []
+        val_index, test_index = train_test_split(np.array(list(val_test_pairs.index)), train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]), random_state=random_state1, shuffle=True, stratify=np.array(list(val_test_pairs['y'])))
+        val_pairs = val_test_pairs.loc[list(val_index),:].reset_index(drop=True)
+        test_pairs = val_test_pairs.loc[list(test_index),:].reset_index(drop=True)
+        
+        
+        ## split training set according to the given batch size
+        N = train_pairs.shape[0]//self.batch_size
+        # seed random state from time
+        random_state2 = np.random.RandomState(int(time.time()))
+        # Sets up 10-fold cross validation set
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
+        train_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'train_loaders'))
-        train_batch = self._split_data(tp=tp_pairs_train, tn=tn_pairs_train, batch_size=self.batch_size)
+        for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
+            train_batch += [train_pairs.loc[list(index),:].reset_index(drop=True)]
         for i in trange(len(train_batch)):
 
-            ## skip this batch if there is only one class in this batch
-            if len(set(train_batch[i]['y'])) == 1:
-                temp_batch += [train_batch[i]]
-                del train_batch[i]
-                continue
             batch_data = train_batch[i]
-            train_set = set()
-            train_set.update(set(batch_data.source))
-            train_set.update(set(batch_data.target))
-            train_idx=torch.tensor(list(map(idx_map.get, train_set)), dtype=torch.int32)
-            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=train_idx, sizes=self.layer_size, batch_size=len(train_idx), shuffle=False, num_workers=self.worker):
+            data_set = set()
+            data_set.update(set(batch_data.source))
+            data_set.update(set(batch_data.target))
+            data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
-                train_loader = (n_id, adjs)
+                loader = (n_id, adjs)
             filename = 'train_loader' + '_' + str(i) + '.pkl'
             with open(os.path.join(self.processed_dir, 'train_loaders', filename), 'wb') as output:
-                pickle.dump(train_loader, output)
-
+                pickle.dump(loader, output)
+        
+        
+        ## split validation set according to the given batch size
+        N = val_pairs.shape[0]//self.batch_size
+        # seed random state from time
+        random_state2 = np.random.RandomState(int(time.time()))
+        # Sets up 10-fold cross validation set
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
+        val_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'val_loaders'))
-        val_batch = self._split_data(tp=tp_pairs_val, tn=tn_pairs_val, batch_size=self.batch_size)
+        for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
+            val_batch += [val_pairs.loc[list(index),:].reset_index(drop=True)]
         for i in trange(len(val_batch)):
 
-            ## skip this batch if there is only one class in this batch
-            if len(set(val_batch[i]['y'])) == 1:
-                temp_batch += [val_batch[i]]
-                del val_batch[i]
-                continue
             batch_data = val_batch[i]
-            val_set = set()
-            val_set.update(set(batch_data.source))
-            val_set.update(set(batch_data.target))
-            val_idx=torch.tensor(list(map(idx_map.get, val_set)), dtype=torch.int32)
-            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=val_idx, sizes=self.layer_size, batch_size=len(val_idx), shuffle=False, num_workers=self.worker):
+            data_set = set()
+            data_set.update(set(batch_data.source))
+            data_set.update(set(batch_data.target))
+            data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
-                val_loader = (n_id, adjs)
+                loader = (n_id, adjs)
             filename = 'val_loader' + '_' + str(i) + '.pkl'
             with open(os.path.join(self.processed_dir, 'val_loaders', filename), 'wb') as output:
-                pickle.dump(val_loader, output)
-
+                pickle.dump(loader, output)            
+            
+        
+        ## split test set according to the given batch size
+        N = test_pairs.shape[0]//self.batch_size
+        # seed random state from time
+        random_state2 = np.random.RandomState(int(time.time()))
+        # Sets up 10-fold cross validation set
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)    
+        test_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'test_loaders'))
-        test_batch = self._split_data(tp=tp_pairs_test, tn=tn_pairs_test, batch_size=self.batch_size)
-        test_batch += temp_batch ## put the inblanced train/val batch to test batch list
+        for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
+            test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
         for i in trange(len(test_batch)):
 
-            # ## skip this batch if there is only one class in this batch
-            # if len(set(test_batch[i]['y'])) == 1:
-            #     del test_batch[i]
-            #     continue
             batch_data = test_batch[i]
-            test_set = set()
-            test_set.update(set(batch_data.source))
-            test_set.update(set(batch_data.target))
-            test_idx=torch.tensor(list(map(idx_map.get, test_set)), dtype=torch.int32)
-            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=test_idx, sizes=self.layer_size, batch_size=len(test_idx), shuffle=False, num_workers=self.worker):
+            data_set = set()
+            data_set.update(set(batch_data.source))
+            data_set.update(set(batch_data.target))
+            data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
-                test_loader = (n_id, adjs)
+                loader = (n_id, adjs)
             filename = 'test_loader' + '_' + str(i) + '.pkl'
             with open(os.path.join(self.processed_dir, 'test_loaders', filename), 'wb') as output:
-                pickle.dump(test_loader, output)
+                pickle.dump(loader, output)
+
 
         train_val_test = [train_batch, val_batch, test_batch]
         
@@ -244,9 +243,9 @@ class ProcessedDataset(InMemoryDataset):
 
 class MakeKFoldData(InMemoryDataset):
     def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
-        if known_int_emb_dict is not None:
-            if not all([len(known_int_emb_dict[key])==dim for key, value in known_int_emb_dict.items()]):
-                raise AssertionError(f"At least one known inital embedding is not eqaul to the dimension of intial embedding you set which is {dim}")
+#         if known_int_emb_dict is not None:
+#             if not all([len(known_int_emb_dict[key])==dim for key, value in known_int_emb_dict.items()]):
+#                 raise AssertionError(f"At least one known inital embedding is not eqaul to the dimension of intial embedding you set which is {dim}")
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
@@ -313,7 +312,7 @@ class MakeKFoldData(InMemoryDataset):
         typeid = {key:index for index, key in enumerate(init_embs)}
         map_files = [idx_map, id_to_type, typeid]
 
-        # seeds random state from time
+        # seed random state from time
         random_state1 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
         cv1 = ms.StratifiedKFold(n_splits=self.K, random_state=random_state1, shuffle=True)
@@ -328,7 +327,7 @@ class MakeKFoldData(InMemoryDataset):
               
             os.mkdir(os.path.join(self.processed_dir, f"fold{fold+1}"))
             N = train_pairs.shape[0]//self.batch_size
-            # seeds random state from time
+            # seed random state from time
             random_state2 = np.random.RandomState(int(time.time()))
             # Sets up 10-fold cross validation set
             cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
@@ -352,7 +351,7 @@ class MakeKFoldData(InMemoryDataset):
                     pickle.dump(loader, output)
 
             N = val_pairs.shape[0]//self.batch_size
-            # seeds random state from time
+            # seed random state from time
             random_state2 = np.random.RandomState(int(time.time()))
             # Sets up 10-fold cross validation set
             cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
@@ -376,7 +375,7 @@ class MakeKFoldData(InMemoryDataset):
                     pickle.dump(loader, output)                    
                     
             N = test_pairs.shape[0]//self.batch_size
-            # seeds random state from time
+            # seed random state from time
             random_state2 = np.random.RandomState(int(time.time()))
             # Sets up 10-fold cross validation set
             cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)                    
@@ -437,9 +436,9 @@ class MakeKFoldData(InMemoryDataset):
 
 class MakeKRandomPairs(InMemoryDataset):
     def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, N=10000, transform=None, pre_transform=None, batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
-        if known_int_emb_dict is not None:
-            if not all([len(known_int_emb_dict[key])==dim for key, value in known_int_emb_dict.items()]):
-                raise AssertionError(f"At least one known inital embedding is not eqaul to the dimension of intial embedding you set which is {dim}")
+#         if known_int_emb_dict is not None:
+#             if not all([len(known_int_emb_dict[key])==dim for key, value in known_int_emb_dict.items()]):
+#                 raise AssertionError(f"At least one known inital embedding is not eqaul to the dimension of intial embedding you set which is {dim}")
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
@@ -527,7 +526,7 @@ class MakeKRandomPairs(InMemoryDataset):
         typeid = {key:index for index, key in enumerate(init_embs)}
         map_files = [idx_map, id_to_type, typeid]
         
-        # seeds random state from time
+        # seed random state from time
         random_state1 = np.random.RandomState(int(time.time()))
         self.tp_pairs['y'] = 1
         self.tn_pairs['y'] = 0
@@ -539,7 +538,7 @@ class MakeKRandomPairs(InMemoryDataset):
         
         
         N = train_pairs.shape[0]//self.batch_size
-        # seeds random state from time
+        # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
@@ -564,7 +563,7 @@ class MakeKRandomPairs(InMemoryDataset):
         
         
         N = test_pairs.shape[0]//self.batch_size
-        # seeds random state from time
+        # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)  
@@ -594,7 +593,7 @@ class MakeKRandomPairs(InMemoryDataset):
         random_pairs = self._rand_rate(self.N, drug_list, disease_list, idx_map)
         
         N = self.tp_pairs.shape[0]//self.batch_size
-        # seeds random state from time
+        # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
@@ -618,7 +617,7 @@ class MakeKRandomPairs(InMemoryDataset):
                 pickle.dump(loader, output)
                 
         N = self.tn_pairs.shape[0]//self.batch_size
-        # seeds random state from time
+        # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
@@ -642,7 +641,7 @@ class MakeKRandomPairs(InMemoryDataset):
                 pickle.dump(loader, output)
                        
         N = random_pairs.shape[0]//self.batch_size
-        # seeds random state from time
+        # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
