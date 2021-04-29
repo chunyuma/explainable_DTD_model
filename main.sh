@@ -11,4 +11,4 @@ python ~/work/explainable_DTD_model/scripts/generate_tp_tn_pairs.py --tp ${datas
 
 # step3: train GNN model
 echo 'running step3: train GNN model'
-/usr/bin/time -v python ~/work/explainable_DTD_model/scripts/run_GNN_model.py --data_path ~/work/explainable_DTD_model/data --run_mode 1  --num_epochs 10 --learning_ratio 0.001 --use_gpu --num_head 1 --init_emb_size 100 --emb_size 128 --num_layers 2 --batch_size 500 --patience 5 --factor 0.5 --print_every 20 --train_val_test_size "[0.8, 0.1, 0.1]" --dropout_p 0 --output_folder ~/work/explainable_DTD_model/results/
+/usr/bin/time -v python ~/work/explainable_DTD_model/scripts/run_GNN_model.py --data_path ~/work/explainable_DTD_model/data --run_mode 1 --num_epochs 200 --learning_ratio 0.001 --use_gpu --num_head 1 --init_emb_size 100 --emb_size 128 --num_layers 2 --batch_size 500 --patience 10 --factor 0.1 --print_every 20 --train_val_test_size "[0.8, 0.1, 0.1]" --dropout_p 0 --output_folder ~/work/explainable_DTD_model/results/
