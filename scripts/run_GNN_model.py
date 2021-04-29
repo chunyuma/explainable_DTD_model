@@ -41,32 +41,26 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
         adjs = [(adj[0][0],(int(adj[1][0]),int(adj[1][1]))) for adj in adjs]
         y = torch.tensor(train_batch[batch_idx]['y'], dtype=torch.float).to(device)
         # deal with inblance class with weights
-        pos = len(torch.where(y == 1)[0])
-        neg = len(torch.where(y == 0)[0])
-        n_sample = neg + pos
+        treat_group_size = len(torch.where(y == 0)[0])
+        not_treat_group_size = len(torch.where(y == 1)[0])
+        contraindicated_for_group_size = len(torch.where(y == 2)[0])
+        n_sample = treat_group_size + not_treat_group_size + contraindicated_for_group_size
         weights = torch.zeros(n_sample, dtype=torch.float)
-        if neg > pos:
-            weights[torch.where(y == 1)[0]] = neg/pos
-            weights[torch.where(y == 0)[0]] = 1
-        elif pos > neg:
-            weights[torch.where(y == 1)[0]] = 1
-            weights[torch.where(y == 0)[0]] = pos/neg
-        else:
-            weights[torch.where(y == 1)[0]] = 1
-            weights[torch.where(y == 0)[0]] = 1
-        weights = weights.to(device)
+        max_size = max(treat_group_size,not_treat_group_size,contraindicated_for_group_size)
+        weights[torch.where(y == 0)[0]] = max_size/treat_group_size
+        weights[torch.where(y == 1)[0]] = max_size/not_treat_group_size
+        weights[torch.where(y == 2)[0]] = max_size/contraindicated_for_group_size
+        criterion = torch.nn.CrossEntropyLoss(weights.to(device))
         link = train_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
         link = torch.tensor(np.array(link), dtype=torch.int)
-#         x_n_id = x[n_id]
 
         optimizer.zero_grad()
         
         if use_gpu is True:
             with amp.autocast(enabled=True): # use mixed precision training
                 pred_y= model(all_init_mats, adjs, link, n_id, all_sorted_indexes).to(device)
-                # train_loss = F.binary_cross_entropy(pred_y, y, weights)
-                train_loss = F.binary_cross_entropy_with_logits(pred_y, y, weights)
-                all_pred = torch.cat([all_pred,torch.sigmoid(pred_y).cpu().detach()])
+                train_loss = criterion(pred_y, y)
+                all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
                 all_y = torch.cat([all_y, y.cpu().detach()])
         
             # Scales loss.
@@ -81,73 +75,63 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
             scaler.update()
         else:
             pred_y= model(all_init_mats, adjs, link, n_id, all_sorted_indexes).to(device)
-            # train_loss = F.binary_cross_entropy(pred_y, y, weights)
-            train_loss = F.binary_cross_entropy_with_logits(pred_y, y, weights)
-            all_pred = torch.cat([all_pred,torch.sigmoid(pred_y).cpu().detach()])
+            train_loss = criterion(pred_y, y)
+            all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
             all_y = torch.cat([all_y, y.cpu().detach()])
             train_loss.backward()
             optimizer.step()            
         
         total_loss += float(train_loss.detach())
         
+        ## print the training info according the user setting
         if batch_idx % print_every == 0 and not batch_idx == 0:
             elapsed = format_time(time.time() - batch_t0)
             print(f"Batch {batch_idx} of {len(train_loader)}. Elapsed: {elapsed}.", flush=True)
-        # pbar.update(1)
 
     train_loss = total_loss / len(train_loader)
-    train_acc = calculate_acc(all_pred,all_y)
+    train_acc = calculate_acc(torch.max(all_pred,1).indices,all_y)
 
     ## evaluate model with validation data
     model.eval()
     total_loss = 0
     all_pred = torch.tensor([])
     all_y = torch.tensor([])
-    # pbar = tqdm(total=len(val_loaders_path))
-    # pbar.set_description(f'Epoch Val{epoch:03d}')
+
     with torch.no_grad():
         for batch_idx, (n_id, adjs) in enumerate(val_loader):
             n_id = n_id[0]
             adjs = [(adj[0][0],(int(adj[1][0]),int(adj[1][1]))) for adj in adjs]
             y = torch.tensor(val_batch[batch_idx]['y'], dtype=torch.float).to(device)
             # deal with inblance class with weights
-            pos = len(torch.where(y == 1)[0])
-            neg = len(torch.where(y == 0)[0])
-            n_sample = neg + pos
+            treat_group_size = len(torch.where(y == 0)[0])
+            not_treat_group_size = len(torch.where(y == 1)[0])
+            contraindicated_for_group_size = len(torch.where(y == 2)[0])
+            n_sample = treat_group_size + not_treat_group_size + contraindicated_for_group_size
             weights = torch.zeros(n_sample, dtype=torch.float)
-            if neg > pos:
-                weights[torch.where(y == 1)[0]] = neg/pos
-                weights[torch.where(y == 0)[0]] = 1
-            elif pos > neg:
-                weights[torch.where(y == 1)[0]] = 1
-                weights[torch.where(y == 0)[0]] = pos/neg
-            else:
-                weights[torch.where(y == 1)[0]] = 1
-                weights[torch.where(y == 0)[0]] = 1
-            weights = weights.to(device)
+            max_size = max(treat_group_size,not_treat_group_size,contraindicated_for_group_size)
+            weights[torch.where(y == 0)[0]] = max_size/treat_group_size
+            weights[torch.where(y == 1)[0]] = max_size/not_treat_group_size
+            weights[torch.where(y == 2)[0]] = max_size/contraindicated_for_group_size
+            criterion = torch.nn.CrossEntropyLoss(weights.to(device))          
             link = val_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
             link = torch.tensor(np.array(link), dtype=torch.int)
-#             x_n_id = x[n_id]
             
             if use_gpu is True:
                 with amp.autocast(enabled=True): # use mixed precision training
                     pred_y = model(all_init_mats, adjs, link, n_id, all_sorted_indexes).detach().to(device)
-                #   val_loss = F.binary_cross_entropy(pred_y, y, weights)
-                    val_loss = F.binary_cross_entropy_with_logits(pred_y, y, weights)
-                    all_pred = torch.cat([all_pred,torch.sigmoid(pred_y).cpu().detach()])
+                    val_loss = criterion(pred_y, y)
+                    all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
                     all_y = torch.cat([all_y, y.cpu().detach()])
             else:
                 pred_y = model(all_init_mats, adjs, link, n_id, all_sorted_indexes).detach().to(device)
-                # val_loss = F.binary_cross_entropy(pred_y, y, weights)
-                val_loss = F.binary_cross_entropy_with_logits(pred_y, y, weights)
-                all_pred = torch.cat([all_pred,torch.sigmoid(pred_y).cpu().detach()])
+                val_loss = criterion(pred_y, y)
+                all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
                 all_y = torch.cat([all_y, y.cpu().detach()])
 
             total_loss += float(val_loss.detach())
-            # pbar.update(1)
         
         val_loss = total_loss / len(val_loader)
-        val_acc = calculate_acc(all_pred,all_y)
+        val_acc = calculate_acc(torch.max(all_pred,1).indices,all_y)
 
     print(f"Single Epoch Stat: Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}", flush=True)
     training_time = format_time(time.time() - t0)
@@ -173,15 +157,14 @@ def evaluate(loader, use_gpu, data_type = 'train'):
             elif data_type == 'test':
                 link = test_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
             link = torch.tensor(np.array(link), dtype=torch.long)
-#             x_n_id = x[n_id]
 
             if use_gpu is True:
                 with amp.autocast(enabled=True): # use mixed precision training
-                    pred = torch.sigmoid(model(all_init_mats, adjs, link, n_id, all_sorted_indexes)).detach().cpu().numpy()
-#                 pred = model(x_n_id, adjs, link, n_id).detach().cpu().numpy()
+                    pred = model(all_init_mats, adjs, link, n_id, all_sorted_indexes)
+                    proba = softmax(pred).detach().cpu().numpy()
             else:
-                pred = torch.sigmoid(model(all_init_mats, adjs, link, n_id, all_sorted_indexes)).detach().cpu().numpy()
-#                 pred = model(x_n_id, adjs, link, n_id).detach().cpu().numpy()
+                pred = model(all_init_mats, adjs, link, n_id, all_sorted_indexes)
+                proba = softmax(pred).detach().cpu().numpy()
 
             if data_type == 'train':
                 label = np.array(train_batch[batch_idx]['y'])
@@ -190,14 +173,14 @@ def evaluate(loader, use_gpu, data_type = 'train'):
             elif data_type == 'test':
                 label = np.array(test_batch[batch_idx]['y'])
 
-            predictions.append(pred)
+            predictions.append(proba)
             labels.append(label)
             # pbar.update(1)
 
-    predictions = np.hstack(predictions)
+    predictions = np.vstack(predictions)
     labels = np.hstack(labels)
     
-    return roc_auc_score(labels, predictions)
+    return roc_auc_score(labels, predictions, multi_class='ovo') # 'ovo' stands for One-vs-one. Computes the average AUC of all possible pairwise combinations of classes [5]. Insensitive to class imbalance when average == 'macro'.
 
 
 def predict_res(loader, batch, use_gpu=True):
@@ -216,15 +199,20 @@ def predict_res(loader, batch, use_gpu=True):
 
             if use_gpu is True:
                 with amp.autocast(enabled=True): # use mixed precision training
-                    proba = torch.sigmoid(model(all_init_mats, adjs, link, n_id, all_sorted_indexes)).detach().cpu().numpy()
+                    pred = model(all_init_mats, adjs, link, n_id, all_sorted_indexes)
+                    proba = softmax(pred)
+                    pred = torch.max(proba,1).indices.detach().cpu().numpy()
+                    proba = torch.max(proba,1).values.detach().cpu().numpy()
             else:
-                proba = torch.sigmoid(model(all_init_mats, adjs, link, n_id, all_sorted_indexes)).detach().cpu().numpy()
-
+                pred = model(all_init_mats, adjs, link, n_id, all_sorted_indexes)
+                proba = softmax(pred)
+                pred = torch.max(proba,1).indices.detach().cpu().numpy()
+                proba = torch.max(proba,1).values.detach().cpu().numpy()
 
             label = np.array(batch[batch_idx]['y'])
 
             probas.append(proba)
-            preds.append(np.array([1 if value>=0.5 else 0 for value in proba]))
+            preds.append(pred)
             labels.append(label)
             # pbar.update(1)
 
@@ -241,14 +229,18 @@ if __name__ == "__main__":
     parser.add_argument("--run_mode", type=int, help="Model for running model. 1 for normal mode, 2 for crossvalidation", default=1)
     parser.add_argument("--data_path", type=str, help="Data Forlder", default='~/work/explainable_DTD_model/mydata')
     parser.add_argument("--use_gpu", action="store_true", help="Use GPU to train model", default=False)
+    parser.add_argument("--use_multiple_gpu", action="store_true", help="Use all GPUs on computer to train model", default=False)
+    parser.add_argument("--seed", type=float, help="Manually set initial seed for pytorch", default=1020)
     parser.add_argument("--learning_ratio", type=float, help="Learning ratio", default=0.001)
     parser.add_argument("--init_emb_size", type=int, help="Initial embedding", default=100)
+    parser.add_argument("--use_known_embedding", action="store_true", help="Use known inital embeeding", default=False)
     parser.add_argument("--num_epochs", type=int, help="Number of epochs to train model", default=50)
     parser.add_argument("--Kfold", type=int, help="Number of fold", default=10)
     parser.add_argument("--emb_size", type=int, help="Embedding vertor dimension", default=512)
     parser.add_argument("--batch_size", type=int, help="Batch size of training data", default=512)
     parser.add_argument("--num_layers", type=int, help="Number of GNN layers to train model", default=3)
     parser.add_argument("--patience", type=int, help="Number of epochs with no improvement after which learning rate will be reduced", default=10)
+    parser.add_argument("--factor", type=float, help="The factor for learning rate to be reduced", default=0.1)
     parser.add_argument("--early_stop_n", type=int, help="Early stop if validation loss doesn't further decrease after n step", default=50)
     parser.add_argument("--num_head", type=int, help="Number of head in GAT model", default=8)
     parser.add_argument("--print_every", type=int, help="How often to print training batch elapsed time", default=10)
@@ -263,7 +255,13 @@ if __name__ == "__main__":
     treat_pairs = pd.read_csv(args.data_path + '/treat.txt', sep='\t', header=0)
     not_treat_pairs = pd.read_csv(args.data_path + '/not_treat.txt', sep='\t', header=0)
     contraindicated_for_pairs = pd.read_csv(args.data_path + '/contraindicated_for.txt', sep='\t', header=0)
+    if args.use_known_embedding:
+        with open(args.data_path + '/known_int_emb_dict.pkl','rb') as infile:
+            known_int_emb_dict = pickle.load(infile)
+    else:
+        known_int_emb_dict = None
 
+    torch.manual_seed(args.seed)
     num_epochs = args.num_epochs
     batch_size = args.batch_size
     embedding_size = args.emb_size
@@ -275,11 +273,13 @@ if __name__ == "__main__":
     init_emb_size = args.init_emb_size
     print_every = args.print_every
     patience = args.patience
+    factor = args.factor
     early_stop_n = args.early_stop_n
     Kfold = args.Kfold
 
     if args.use_gpu and torch.cuda.is_available():
         use_gpu = True
+        use_multiple_gpu = args.use_multiple_gpu
         torch.cuda.reset_peak_memory_stats()
     elif args.use_gpu:
         print('No GPU is detected in this computer. Use CPU instead.')
@@ -300,8 +300,10 @@ if __name__ == "__main__":
         train_loader = dataset.get_train_loader()
         val_loader = dataset.get_val_loader()
         test_loader = dataset.get_test_loader()
+        init_emb = data.feat
+        type_init_emb_size = [init_emb[key][0].shape[1] for key,value in init_emb.items()]
         
-        model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu)
+        model = GAT(type_init_emb_size, embedding_size, 3, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
         folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
@@ -309,11 +311,11 @@ if __name__ == "__main__":
             pass
         writer = SummaryWriter(log_dir=os.path.join(args.output_folder, folder_name, 'tensorboard_runs'))
         
-        init_emb = data.feat
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, threshold=0.0001, threshold_mode='rel')
+        softmax = torch.nn.Softmax(dim=1)
         if use_gpu:
             scaler = amp.GradScaler(enabled=True) # scaler for mixed precision training
         all_train_loss = []
@@ -341,7 +343,7 @@ if __name__ == "__main__":
                 count = 0
                 current_min_val_loss = val_loss
                 model_state_dict = model.state_dict()
-                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.3f}_patience{patience}.pt'   
+                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch+1:04d}_val_loss{current_min_val_loss:.4f}_patience{patience}_factor{factor}.pt'   
 
         writer.close()
         ## save model and weights
@@ -358,7 +360,7 @@ if __name__ == "__main__":
     
         print("")
         print('#### Load in the best model', flush=True)
-        model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu)
+        model = GAT(type_init_emb_size, embedding_size, 3, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
         model.load_state_dict(torch.load(os.path.join(args.output_folder, folder_name, model_name))['model_state_dict'])
 
         print("")
@@ -372,12 +374,13 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'crossvalidation_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = MakeKFoldData(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, K=Kfold, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
+        dataset = MakeKFoldData(root=processdata_path, raw_edges=raw_edges, node_info=node_info, treat_pairs=treat_pairs, not_treat_pairs=not_treat_pairs, contraindicated_for_pairs=contraindicated_for_pairs, K=Kfold, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
         print('Pre-processing data completed', flush=True)
-        del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
+        del raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
         idx_map, id_to_type, typeid = dataset.get_mapfiles()
         init_emb = data.feat
+        type_init_emb_size = [init_emb[key][0].shape[1] for key,value in init_emb.items()]
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         tprs = []
@@ -392,7 +395,7 @@ if __name__ == "__main__":
             val_loader = dataset.get_val_loader(fold+1)
             test_loader = dataset.get_test_loader(fold+1)
             
-            model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu)
+            model = GAT(type_init_emb_size, embedding_size, 3, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
             folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}'
             
             try:
@@ -415,6 +418,7 @@ if __name__ == "__main__":
             
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+            softmax = torch.nn.Softmax(dim=1)
             if use_gpu:
                 scaler = amp.GradScaler(enabled=True)
             all_train_loss = []
@@ -430,7 +434,7 @@ if __name__ == "__main__":
                 if count > early_stop_n:
                     break
                 train_loss, train_acc, val_loss, val_acc = train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val_batch)
-#                 scheduler.step(val_loss)
+                scheduler.step(val_loss)
                 all_train_loss += [train_loss]
                 all_val_loss += [val_loss]
                 writer.add_scalars('Loss', {'train': train_loss, 'val': val_loss}, epoch)
@@ -451,7 +455,7 @@ if __name__ == "__main__":
             
             print("")
             print('#### Load in the best model', flush=True)
-            model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu)
+            model = GAT(type_init_emb_size, embedding_size, 3, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
             model.load_state_dict(torch.load(os.path.join(args.output_folder, folder_name, f'{Kfold}foldcrossvalidation', f'fold{fold+1}', model_name))['model_state_dict'])
 
             labels, preds, probas = predict_res(test_loader, test_batch, use_gpu=use_gpu)
@@ -499,19 +503,22 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'randompairs_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
+        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, treat_pairs=treat_pairs, not_treat_pairs=not_treat_pairs, contraindicated_for_pairs=contraindicated_for_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
         print('Pre-processing data completed', flush=True)
-        del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
+        del raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
+        init_emb = data.feat
+        type_init_emb_size = [init_emb[key][0].shape[1] for key,value in init_emb.items()]
         idx_map, id_to_type, typeid = dataset.get_mapfiles()
-        train_batch, test_batch, tp_batch, tn_batch, rp_batch = dataset.get_batch_set()
+        train_batch, val_batch, treat_pairs_batch, not_treat_pairs_batch, contraindicated_for_pairs_batch, rp_batch = dataset.get_batch_set()
         train_loader = dataset.get_train_loader()
-        test_loader = dataset.get_test_loader()
-        tp_loader = dataset.get_tp_loader()
-        tn_loader = dataset.get_tn_loader()
+        val_loader = dataset.get_val_loader()
+        treat_loader = dataset.get_treat_pairs_loader()
+        not_treat_loader = dataset.get_not_treat_pairs_loader()
+        contraindicated_for_loader = dataset.get_contraindicated_for_pairs_loader()
         rp_loader = dataset.get_rp_loader()
         
-        model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu)
+        model = GAT(type_init_emb_size, embedding_size, 3, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
         folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
@@ -527,11 +534,11 @@ if __name__ == "__main__":
             pass
         writer = SummaryWriter(log_dir=os.path.join(args.output_folder, folder_name, 'randompairs', 'tensorboard_runs'))
 
-        init_emb = data.feat
         all_sorted_indexes = torch.hstack([init_emb[key][1] for key,value in init_emb.items()]).sort().indices
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, threshold=0.0001, threshold_mode='rel')
+        softmax = torch.nn.Softmax(dim=1)
         if use_gpu:
             scaler = amp.GradScaler(enabled=True) # scaler for mixed precision training
         all_train_loss = []
@@ -579,23 +586,27 @@ if __name__ == "__main__":
         model = GAT(init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_node_types=len(typeid), num_head = num_head, use_gpu=use_gpu)
         model.load_state_dict(torch.load(os.path.join(args.output_folder, folder_name, 'randompairs', model_name))['model_state_dict'])
         
-        # Get random pairs cutoff rates
-        _, _, probas_rand = predict_res(rp_loader, rp_batch, use_gpu=use_gpu)
+#         # Get random pairs cutoff rates
+#         _, _, probas_rand = predict_res(rp_loader, rp_batch, use_gpu=use_gpu)
         
-        # Get true positive cutoff rates
-        _, _, probas_tp = predict_res(tp_loader, tp_batch, use_gpu=use_gpu)  
+#         # Get treat cutoff rates
+#         _, _, probas_tp = predict_res(treat_loader, treat_pairs_batch, use_gpu=use_gpu)  
 
-        # Get true negative cutoff rates
-        _, _, probas_tn = predict_res(tn_loader, tn_batch, use_gpu=use_gpu)
+#         # Get not treat cutoff rates
+#         _, _, probas_tn = predict_res(not_treat_loader, not_treat_pairs_batch, use_gpu=use_gpu)
         
-        # Plot the cutoff rates together
-        plot_cutoff([pd.DataFrame({"treat_prob":[pr for pr in probas_rand]}),
-                pd.DataFrame({"treat_prob":[pr for pr in probas_tp]}),
-                pd.DataFrame({"treat_prob":[pr for pr in probas_tn]})],
-                os.path.join(args.output_folder, folder_name, 'randompairs'),
-                ["Random Pairs",
-                "True Positives", 
-                "True Negatives"])
+#         # Get contraindicated for cutoff rates
+#         _, _, probas_tn = predict_res(contraindicated_for_loader, contraindicated_for_pairs_batch, use_gpu=use_gpu)
+        
+#         # Plot the cutoff rates together
+#         plot_cutoff([pd.DataFrame({"treat_prob":[pr for pr in probas_rand]}),
+#                 pd.DataFrame({"treat_prob":[pr for pr in probas_tp]}),
+#                 pd.DataFrame({"treat_prob":[pr for pr in probas_tn]})],
+#                 pd.DataFrame({"treat_prob":[pr for pr in probas_tn]})],
+#                 os.path.join(args.output_folder, folder_name, 'randompairs'),
+#                 ["Random Pairs",
+#                 "True Positives", 
+#                 "True Negatives"])
         
     else:
         print('Running mode only accepts 1 or 2 or 3')

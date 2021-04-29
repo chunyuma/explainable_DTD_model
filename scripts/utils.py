@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 plt.switch_backend('agg')
 
-def calculate_acc(preds, labels, threshold=0.5):
-    preds = (preds>=threshold).float()
+def calculate_acc(preds, labels):
     acc = (preds == labels).float().mean()
     return acc
 

@@ -16,11 +16,9 @@ import time
 import random
 
 class ProcessedDataset(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100):
-        try:
-            assert sum(train_val_test_size)==1
-        except AssertionError:
-            print("The sum of percents in train_val_test_size should be 1")
+    def __init__(self, root, raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
+        if not sum(train_val_test_size)==1:
+            raise AssertionError("The sum of percents in train_val_test_size should be 1")
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
@@ -28,6 +26,7 @@ class ProcessedDataset(InMemoryDataset):
         self.not_treat_pairs = not_treat_pairs
         self.contraindicated_for_pairs = contraindicated_for_pairs
         self.dim = dim
+        self.known_int_emb_dict = known_int_emb_dict
         self.train_val_test_size = train_val_test_size
         self.worker = 4 #multiprocessing.cpu_count()
         self.layer_size = []
@@ -53,9 +52,24 @@ class ProcessedDataset(InMemoryDataset):
         return (np.array(list(map(ulabels_dict.get, labels)), dtype=np.int32), ulabels_dict)
 
     @staticmethod
-    def _generate_init_emb(idx_map, node_info, dim=100):
+    def _generate_init_emb(idx_map, node_info, dim=100, known_int_emb_dict=None):
         init_embs = dict()
-        ulabels = set(node_info.category)
+        ulabels = list(set(node_info.category))
+        if known_int_emb_dict is not None:
+            known_int_emb_df = pd.DataFrame([(curie_id, array) for curie_id, array in known_int_emb_dict.items()]).rename(columns={0:'id',1:'array'})
+            known_int_emb_df = known_int_emb_df.merge(node_info,on='id').reset_index(drop=True)
+            category_has_known_init_emb = set(known_int_emb_df['category'])
+            for category in category_has_known_init_emb:
+                try:
+                    assert known_int_emb_df.loc[known_int_emb_df.category.isin([category]),:].shape[0] == node_info.loc[node_info.category.isin([category]),:].shape[0]
+                except AssertionError:
+                    print(f"Not all curies with cateogry {category} have known intial embedding")    
+                curie_ids = known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'id']
+                curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
+                init_emb = torch.tensor(np.vstack(list(known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'array'])), dtype=torch.float32)
+                init_embs[category] = (init_emb, curie_ids)
+                ulabels.remove(category)
+                
         for label in ulabels:
             curie_ids = node_info.loc[node_info.category.isin([label]),'id']
             curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
@@ -96,7 +110,7 @@ class ProcessedDataset(InMemoryDataset):
         idx_map = {j: i for i, j in enumerate(all_nodes)}
         edges = np.array(list(map(idx_map.get, np.array(self.raw_edges).flatten())), dtype=np.int32).reshape(np.array(self.raw_edges).shape)
         
-        init_embs = self._generate_init_emb(idx_map, node_info, dim=self.dim)
+        init_embs = self._generate_init_emb(idx_map, node_info, dim=self.dim, known_int_emb_dict=self.known_int_emb_dict)
         edge_index = torch.tensor(edges.T, dtype=torch.long)
         data = Data(feat=init_embs, edge_index=edge_index)
         id_to_type = {idx_map[node_info['id'][index]]:node_info['category'][index] for index in range(node_info.shape[0])}
@@ -228,13 +242,16 @@ class ProcessedDataset(InMemoryDataset):
 
 
 class MakeKFoldData(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info,  treat_pairs, not_treat_pairs, contraindicated_for_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100):
+    def __init__(self, root, raw_edges, node_info,  treat_pairs, not_treat_pairs, contraindicated_for_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
+        if not sum(train_val_test_size)==1:
+            raise AssertionError("The sum of percents in train_val_test_size should be 1")
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
         self.treat_pairs = treat_pairs
         self.not_treat_pairs = not_treat_pairs
         self.contraindicated_for_pairs = contraindicated_for_pairs
+        self.known_int_emb_dict = known_int_emb_dict
         self.dim = dim
         self.K = K
         self.worker = 4 #multiprocessing.cpu_count()
@@ -255,9 +272,24 @@ class MakeKFoldData(InMemoryDataset):
         pass
     
     @staticmethod
-    def _generate_init_emb(idx_map, node_info, dim=100):
+    def _generate_init_emb(idx_map, node_info, dim=100, known_int_emb_dict=None):
         init_embs = dict()
-        ulabels = set(node_info.category)
+        ulabels = list(set(node_info.category))
+        if known_int_emb_dict is not None:
+            known_int_emb_df = pd.DataFrame([(curie_id, array) for curie_id, array in known_int_emb_dict.items()]).rename(columns={0:'id',1:'array'})
+            known_int_emb_df = known_int_emb_df.merge(node_info,on='id').reset_index(drop=True)
+            category_has_known_init_emb = set(known_int_emb_df['category'])
+            for category in category_has_known_init_emb:
+                try:
+                    assert known_int_emb_df.loc[known_int_emb_df.category.isin([category]),:].shape[0] == node_info.loc[node_info.category.isin([category]),:].shape[0]
+                except AssertionError:
+                    print(f"Not all curies with cateogry {category} have known intial embedding")    
+                curie_ids = known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'id']
+                curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
+                init_emb = torch.tensor(np.vstack(list(known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'array'])), dtype=torch.float32)
+                init_embs[category] = (init_emb, curie_ids)
+                ulabels.remove(category)
+                
         for label in ulabels:
             curie_ids = node_info.loc[node_info.category.isin([label]),'id']
             curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
@@ -274,7 +306,7 @@ class MakeKFoldData(InMemoryDataset):
         idx_map = {j: i for i, j in enumerate(all_nodes)}
         edges = np.array(list(map(idx_map.get, np.array(self.raw_edges).flatten())), dtype=np.int32).reshape(np.array(self.raw_edges).shape)
 
-        init_embs = self._generate_init_emb(idx_map, node_info, dim=self.dim)
+        init_embs = self._generate_init_emb(idx_map, node_info, dim=self.dim, known_int_emb_dict=self.known_int_emb_dict)
         edge_index = torch.tensor(edges.T, dtype=torch.long)
         data = Data(feat=init_embs, edge_index=edge_index)
         id_to_type = {idx_map[node_info['id'][index]]:node_info['category'][index] for index in range(node_info.shape[0])}
@@ -405,13 +437,14 @@ class MakeKFoldData(InMemoryDataset):
     
 
 class MakeKRandomPairs(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs, N=10000, transform=None, pre_transform=None, batch_size=512, layers=3, dim=100):
+    def __init__(self, root, raw_edges, node_info, treat_pairs, not_treat_pairs, contraindicated_for_pairs, N=10000, transform=None, pre_transform=None, batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
         self.raw_edges = raw_edges[['source','target']]
         self.node_info = node_info
         self.batch_size = batch_size
         self.treat_pairs = treat_pairs
         self.not_treat_pairs = not_treat_pairs
         self.contraindicated_for_pairs = contraindicated_for_pairs
+        self.known_int_emb_dict = known_int_emb_dict
         self.dim = dim
         self.N = N
         self.worker = 4 #multiprocessing.cpu_count()
@@ -432,9 +465,24 @@ class MakeKRandomPairs(InMemoryDataset):
         pass
     
     @staticmethod
-    def _generate_init_emb(idx_map, node_info, dim=100):
+    def _generate_init_emb(idx_map, node_info, dim=100, known_int_emb_dict=None):
         init_embs = dict()
-        ulabels = set(node_info.category)
+        ulabels = list(set(node_info.category))
+        if known_int_emb_dict is not None:
+            known_int_emb_df = pd.DataFrame([(curie_id, array) for curie_id, array in known_int_emb_dict.items()]).rename(columns={0:'id',1:'array'})
+            known_int_emb_df = known_int_emb_df.merge(node_info,on='id').reset_index(drop=True)
+            category_has_known_init_emb = set(known_int_emb_df['category'])
+            for category in category_has_known_init_emb:
+                try:
+                    assert known_int_emb_df.loc[known_int_emb_df.category.isin([category]),:].shape[0] == node_info.loc[node_info.category.isin([category]),:].shape[0]
+                except AssertionError:
+                    print(f"Not all curies with cateogry {category} have known intial embedding")    
+                curie_ids = known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'id']
+                curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
+                init_emb = torch.tensor(np.vstack(list(known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'array'])), dtype=torch.float32)
+                init_embs[category] = (init_emb, curie_ids)
+                ulabels.remove(category)
+                
         for label in ulabels:
             curie_ids = node_info.loc[node_info.category.isin([label]),'id']
             curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
@@ -471,7 +519,7 @@ class MakeKRandomPairs(InMemoryDataset):
         idx_map = {j: i for i, j in enumerate(all_nodes)}
         edges = np.array(list(map(idx_map.get, np.array(self.raw_edges).flatten())), dtype=np.int32).reshape(np.array(self.raw_edges).shape)
 
-        init_embs = self._generate_init_emb(idx_map, node_info, dim=self.dim)
+        init_embs = self._generate_init_emb(idx_map, node_info, dim=self.dim, known_int_emb_dict=self.known_int_emb_dict)
         edge_index = torch.tensor(edges.T, dtype=torch.long)
         data = Data(feat=init_embs, edge_index=edge_index)
         id_to_type = {idx_map[node_info['id'][index]]:node_info['category'][index] for index in range(node_info.shape[0])}
@@ -661,9 +709,9 @@ class MakeKRandomPairs(InMemoryDataset):
         train_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'train_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
         return DataLoader(DataWrapper(train_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
     
-    def get_test_loader(self):
-        test_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'test_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
-        return DataLoader(DataWrapper(test_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
+    def get_val_loader(self):
+        val_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'val_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
+        return DataLoader(DataWrapper(val_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
     
     def get_treat_pairs_loader(self):
         treat_pairs_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'treat_pairs_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
