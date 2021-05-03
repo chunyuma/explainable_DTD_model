@@ -39,17 +39,15 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
         batch_t0 = time.time()
         n_id = n_id[0]
         adjs = [(adj[0][0],(int(adj[1][0]),int(adj[1][1]))) for adj in adjs]
-        y = torch.tensor(train_batch[batch_idx]['y'], dtype=torch.float).to(device)
+        y = torch.tensor(train_batch[batch_idx]['y'], dtype=torch.long).to(device)
         # deal with inblance class with weights
         treat_group_size = len(torch.where(y == 0)[0])
         not_treat_group_size = len(torch.where(y == 1)[0])
         contraindicated_for_group_size = len(torch.where(y == 2)[0])
-        n_sample = treat_group_size + not_treat_group_size + contraindicated_for_group_size
-        weights = torch.zeros(n_sample, dtype=torch.float)
+#         n_sample = treat_group_size + not_treat_group_size + contraindicated_for_group_size
+#         weights = torch.zeros(n_sample, dtype=torch.float)
         max_size = max(treat_group_size,not_treat_group_size,contraindicated_for_group_size)
-        weights[torch.where(y == 0)[0]] = max_size/treat_group_size
-        weights[torch.where(y == 1)[0]] = max_size/not_treat_group_size
-        weights[torch.where(y == 2)[0]] = max_size/contraindicated_for_group_size
+        weights = torch.tensor([max_size/treat_group_size,max_size/not_treat_group_size,max_size/contraindicated_for_group_size],dtype=torch.float)
         criterion = torch.nn.CrossEntropyLoss(weights.to(device))
         link = train_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
         link = torch.tensor(np.array(link), dtype=torch.int)
@@ -101,17 +99,15 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
         for batch_idx, (n_id, adjs) in enumerate(val_loader):
             n_id = n_id[0]
             adjs = [(adj[0][0],(int(adj[1][0]),int(adj[1][1]))) for adj in adjs]
-            y = torch.tensor(val_batch[batch_idx]['y'], dtype=torch.float).to(device)
+            y = torch.tensor(val_batch[batch_idx]['y'], dtype=torch.long).to(device)
             # deal with inblance class with weights
             treat_group_size = len(torch.where(y == 0)[0])
             not_treat_group_size = len(torch.where(y == 1)[0])
             contraindicated_for_group_size = len(torch.where(y == 2)[0])
-            n_sample = treat_group_size + not_treat_group_size + contraindicated_for_group_size
-            weights = torch.zeros(n_sample, dtype=torch.float)
+#             n_sample = treat_group_size + not_treat_group_size + contraindicated_for_group_size
+#             weights = torch.zeros(n_sample, dtype=torch.float)
             max_size = max(treat_group_size,not_treat_group_size,contraindicated_for_group_size)
-            weights[torch.where(y == 0)[0]] = max_size/treat_group_size
-            weights[torch.where(y == 1)[0]] = max_size/not_treat_group_size
-            weights[torch.where(y == 2)[0]] = max_size/contraindicated_for_group_size
+            weights = torch.tensor([max_size/treat_group_size,max_size/not_treat_group_size,max_size/contraindicated_for_group_size],dtype=torch.float)
             criterion = torch.nn.CrossEntropyLoss(weights.to(device))          
             link = val_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
             link = torch.tensor(np.array(link), dtype=torch.int)
@@ -289,7 +285,7 @@ if __name__ == "__main__":
     
     if args.run_mode == 1:
 
-        processdata_path = os.path.join(args.data_path, f'ProcessedDataset_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
+        processdata_path = os.path.join(args.data_path, f'ProcessedDataset_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}_multiclass')
         print('Start pre-processing data', flush=True)
         dataset = ProcessedDataset(root=processdata_path, raw_edges=raw_edges, node_info=node_info, treat_pairs=treat_pairs, not_treat_pairs=not_treat_pairs, contraindicated_for_pairs=contraindicated_for_pairs, train_val_test_size=train_val_test_size, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
         print('Pre-processing data completed', flush=True)
