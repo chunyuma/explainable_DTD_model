@@ -37,7 +37,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
     for batch_idx, (n_id, adjs) in enumerate(train_loader):
         
         batch_t0 = time.time()
-        n_id = n_id[0]
+        n_id = n_id[0].to(device)
         adjs = [(adj[0][0],(int(adj[1][0]),int(adj[1][1]))) for adj in adjs]
         y = torch.tensor(train_batch[batch_idx]['y'], dtype=torch.float).to(device)
         # deal with inblance class with weights
@@ -56,7 +56,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
             weights[torch.where(y == 0)[0]] = 1
         weights = weights.to(device)
         link = train_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
-        link = torch.tensor(np.array(link), dtype=torch.int)
+        link = torch.tensor(np.array(link), dtype=torch.int).to(device)
 #         x_n_id = x[n_id]
 
         optimizer.zero_grad()
@@ -107,7 +107,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
     # pbar.set_description(f'Epoch Val{epoch:03d}')
     with torch.no_grad():
         for batch_idx, (n_id, adjs) in enumerate(val_loader):
-            n_id = n_id[0]
+            n_id = n_id[0].to(device)
             adjs = [(adj[0][0],(int(adj[1][0]),int(adj[1][1]))) for adj in adjs]
             y = torch.tensor(val_batch[batch_idx]['y'], dtype=torch.float).to(device)
             # deal with inblance class with weights
@@ -126,7 +126,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
                 weights[torch.where(y == 0)[0]] = 1
             weights = weights.to(device)
             link = val_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
-            link = torch.tensor(np.array(link), dtype=torch.int)
+            link = torch.tensor(np.array(link), dtype=torch.int).to(device)
 #             x_n_id = x[n_id]
             
             if use_gpu is True:
@@ -164,7 +164,7 @@ def evaluate(loader, use_gpu, data_type = 'train'):
 
     with torch.no_grad():
         for batch_idx, (n_id, adjs) in enumerate(loader):
-            n_id = n_id[0]
+            n_id = n_id[0].to(device)
             adjs = [(adj[0][0],(int(adj[1][0]),int(adj[1][1]))) for adj in adjs]
             if data_type == 'train':
                 link = train_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
@@ -172,7 +172,7 @@ def evaluate(loader, use_gpu, data_type = 'train'):
                 link = val_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
             elif data_type == 'test':
                 link = test_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
-            link = torch.tensor(np.array(link), dtype=torch.long)
+            link = torch.tensor(np.array(link), dtype=torch.long).to(device)
 #             x_n_id = x[n_id]
 
             if use_gpu is True:
@@ -384,7 +384,7 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'crossvalidation_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = MakeKFoldData(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, K=Kfold, batch_size=batch_size, layers=num_layers, dim=init_emb_size, use_multiple_gpu=use_multiple_gpu)
+        dataset = MakeKFoldData(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, K=Kfold, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
         print('Pre-processing data completed', flush=True)
         del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
@@ -512,7 +512,7 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'randompairs_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size, use_multiple_gpu=use_multiple_gpu)
+        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
         print('Pre-processing data completed', flush=True)
         del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
