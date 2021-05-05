@@ -3,6 +3,7 @@ from datetime import timedelta
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 import pandas as pd
+import re
 plt.switch_backend('agg')
 
 def calculate_acc(preds, labels, threshold=0.5):
@@ -53,3 +54,33 @@ def plot_cutoff(dfs, outloc, title_post = ["Random Pairings", "True Negatives", 
     outloc = outloc + '/Figure1.png'
     plt.savefig(outloc)
     plt.close()
+
+def clean_up_desc(string):
+    if type(string) is str:
+        if string == 'None':
+            return ''
+        elif len(re.findall("^COMMENTS: ", string)) != 0:
+            return re.sub("^COMMENTS: ","", string)
+        elif len(re.findall("-!- FUNCTION: ", string)) != 0:
+            part1 = [part for part in string.split('-!-') if len(re.findall("^ FUNCTION: ", part)) != 0][0].replace(' FUNCTION: ','')
+            part2 = re.sub(' \{ECO:.*\}.','',re.sub(" \(PubMed:[0-9]*,? ?(PubMed:[0-9]*,?)?\)","",part1))
+            return part2
+        elif len(re.findall("Check for \"https:\/\/www\.cancer\.gov\/", string)) != 0:
+            return re.sub("Check for \"https:\/\/www\.cancer\.gov\/.*\" active clinical trials using this agent. \(\".*NCI Thesaurus\); ","",string)
+        else:
+            return string
+    elif string is None:
+        return ''
+    else:
+        raise ValueError('Not expected type {type(string)}')
+        
+def clean_up_name(string):
+    if type(string) is str:
+        if string == 'None':
+            return ''
+        else:
+            return string
+    elif string is None:
+        return ''
+    else:
+        raise ValueError('Not expected type {type(string)}')
