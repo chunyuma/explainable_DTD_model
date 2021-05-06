@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import pickle
 import argparse
 import torch.cuda.amp as amp
-from utils import calculate_acc, format_time, plot_cutoff
+from utils import calculate_acc, format_time, plot_cutoff, calculate_f1score
 import time
 import gc
 import sklearn.metrics as met
@@ -149,7 +149,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
         val_loss = total_loss / len(val_loader)
         val_acc = calculate_acc(all_pred,all_y)
 
-    print(f"Epoch Stat: Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}", flush=True)
+    print(f"Epoch Stat: Train Loss: {train_loss:.5f}, Train Acc: {train_acc:.5f}, Val Loss: {val_loss:.5f}, Val Acc: {val_acc:.5f}", flush=True)
     training_time = format_time(time.time() - t0)
     print(f"The total running time of this epoch: {training_time}", flush=True)
 
@@ -197,7 +197,14 @@ def evaluate(loader, use_gpu, data_type = 'train'):
     predictions = np.hstack(predictions)
     labels = np.hstack(labels)
     
-    return roc_auc_score(labels, predictions)
+    ## calculate accuracy
+    acc = calculate_acc(predictions,labels)
+    ## calculate F1 score
+    f1score = calculate_f1score(predictions,labels)
+    ## calculate AUC
+    auc_score = roc_auc_score(labels, predictions)
+    
+    return [acc, f1score, auc_score]
 
 
 def predict_res(loader, batch, use_gpu=True):
@@ -315,7 +322,7 @@ if __name__ == "__main__":
         type_init_emb_size = [init_emb[key][0].shape[1] for key,value in init_emb.items()]
         
         model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
-        folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
+        folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:05d}_patience{patience}_factor{factor}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
         except:
@@ -353,7 +360,7 @@ if __name__ == "__main__":
                 count = 0
                 current_min_val_loss = val_loss
                 model_state_dict = model.state_dict()
-                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch+1:04d}_val_loss{current_min_val_loss:.4f}_patience{patience}_factor{factor}.pt'   
+                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch+1:05d}_val_loss{current_min_val_loss:.5f}_patience{patience}_factor{factor}.pt'   
 
         writer.close()
         ## save model and weights
@@ -375,10 +382,12 @@ if __name__ == "__main__":
 
         print("")
         print('#### Evaluate model with AUC score ####')
-        train_auc = evaluate(train_loader, use_gpu, data_type = 'train')
-        val_auc = evaluate(val_loader, use_gpu, data_type = 'val')
-        test_auc = evaluate(test_loader, use_gpu, data_type = 'test')
+        train_acc, train_f1score, train_auc_score = evaluate(train_loader, use_gpu, data_type = 'train')
+        val_acc, val_f1score, val_auc_score = evaluate(val_loader, use_gpu, data_type = 'val')
+        test_acc, test_f1score, test_auc_score = evaluate(test_loader, use_gpu, data_type = 'test')
         print(f'Final AUC: Train Auc: {train_auc:.5f}, Val Auc: {val_auc:.5f}, Test Auc: {test_auc:.5f}')
+        print(f'Final Accuracy: Train Accuracy: {train_acc:.5f}, Val Accuracy: {val_acc:.5f}, Test Accuracy: {test_acc:.5f}')
+        print(f'Final F1score: Train F1score: {train_f1score:.5f}, Val F1score: {val_f1score:.5f}, Test F1score: {test_f1score:.5f}')
 
     elif args.run_mode == 2:
 
@@ -406,7 +415,7 @@ if __name__ == "__main__":
             test_loader = dataset.get_test_loader(fold+1)
             
             model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
-            folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
+            folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:05d}_patience{patience}_factor{factor}'
             
             try:
                 os.mkdir(os.path.join(args.output_folder, folder_name))
@@ -455,7 +464,7 @@ if __name__ == "__main__":
                     count = 0
                     current_min_val_loss = val_loss
                     model_state_dict = model.state_dict()
-                    model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.4f}_patience{patience}_factor{factor}.pt'   
+                    model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:05d}_val_loss{current_min_val_loss:.5f}_patience{patience}_factor{factor}.pt'   
 
             writer.close()
             ## save model and weights
@@ -475,7 +484,7 @@ if __name__ == "__main__":
             tprs[-1][0] = 0.0
             roc_auc = met.auc(fpr, tpr)
             aucs.append(roc_auc)
-            plt.plot(fpr, tpr, lw=1, alpha=0.3, label='ROC fold %d (AUC = %0.4f, F1 = %0.4f)' % (fold+1, roc_auc, f1))
+            plt.plot(fpr, tpr, lw=1, alpha=0.3, label='ROC fold %d (AUC = %0.5f, F1 = %0.5f)' % (fold+1, roc_auc, f1))
 
         
         # Plots the 50/50 line
@@ -487,8 +496,8 @@ if __name__ == "__main__":
         mean_tpr[-1] = 1.0
         mean_auc = met.auc(mean_fpr, mean_tpr)
         std_auc = np.std(aucs)
-        plt.plot(mean_fpr, mean_tpr, color='b', label=u'Mean ROC (AUC = %0.4f \u00B1 %0.4f, \n        \
-                        Mean F1 = %0.4f)' % (mean_auc, std_auc, mean_f1),
+        plt.plot(mean_fpr, mean_tpr, color='b', label=u'Mean ROC (AUC = %0.5f \u00B1 %0.5f, \n        \
+                        Mean F1 = %0.5f)' % (mean_auc, std_auc, mean_f1),
                     lw=2, alpha=.8)
 
         # Finds and plots the +- standard deviation for roc curve
@@ -527,7 +536,7 @@ if __name__ == "__main__":
         type_init_emb_size = [init_emb[key][0].shape[1] for key,value in init_emb.items()]
         
         model = GAT(type_init_emb_size, embedding_size, 1, num_layers=num_layers, dropout_p=dropout_p, num_head = num_head, use_gpu=use_gpu, use_multiple_gpu=use_multiple_gpu)
-        folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:04d}_patience{patience}_factor{factor}'
+        folder_name = f'batchsize{batch_size}_initemb{init_emb_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{num_epochs:05d}_patience{patience}_factor{factor}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
         except:
@@ -573,7 +582,7 @@ if __name__ == "__main__":
                 count = 0
                 current_min_val_loss = val_loss
                 model_state_dict = model.state_dict()
-                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:04d}_val_loss{current_min_val_loss:.4f}_patience{patience}_factor{factor}.pt'
+                model_name = f'GAT_batchsize{batch_size}_embeddingsize{embedding_size}_layers{num_layers}_numhead{num_head}_lr{lr}_epoch{epoch:05d}_val_loss{current_min_val_loss:.5f}_patience{patience}_factor{factor}.pt'
                 
         writer.close()
         ## save model and weights

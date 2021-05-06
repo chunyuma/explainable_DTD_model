@@ -4,11 +4,21 @@ from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 import pandas as pd
 import re
+from sklearn.metrics import f1_score
 plt.switch_backend('agg')
 
+def calculate_f1score(preds, labels, threshold=0.5):
+    preds = np.array(preds)
+    labels = np.array(labels)
+    preds = (np.array(preds)>=threshold).astype(int)
+    f1score = f1_score(labels, preds, average='binary')
+    return f1score
+
 def calculate_acc(preds, labels, threshold=0.5):
-    preds = (preds>=threshold).float()
-    acc = (preds == labels).float().mean()
+    preds = np.array(preds)
+    labels = np.array(labels)
+    preds = (np.array(preds)>=threshold).astype(int)
+    acc = (preds == labels).astype(float).mean()
     return acc
 
 def format_time(elapsed):
