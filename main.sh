@@ -1,7 +1,7 @@
 ## step1: download graph from neo4j database
 ## make sure if the version of neo4j-driver is >=1.7.0, <=1.7.6
 echo 'running step1: download graph from neo4j database'
-python  ~/work/explainable_DTD_model/scripts/download_data_from_neo4j.py --output_folder ~/work/explainable_DTD_model/data
+python  /home/zhihan/explainable_DTD_model/scripts/download_data_from_neo4j.py --output_folder /home/zhihan/explainable_DTD_model/data
 
 
 ## step2: generate training data

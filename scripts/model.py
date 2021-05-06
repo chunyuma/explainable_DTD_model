@@ -210,7 +210,6 @@ class GAT(torch.nn.Module):
                     x = self.convs[i]((x, x_target), edge_index)
                 x = F.elu(x)
                 x = F.dropout(x, p=self.dropout_p, training=self.training)
-
             i = i + 1
             if self.use_multiple_gpu is True:
                 device = f"cuda:{i % torch.cuda.device_count()}"
