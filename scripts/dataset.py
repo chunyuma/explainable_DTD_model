@@ -141,6 +141,9 @@ class ProcessedDataset(InMemoryDataset):
         os.mkdir(os.path.join(self.processed_dir, 'train_loaders'))
         for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
             train_batch += [train_pairs.loc[list(index),:].reset_index(drop=True)]
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating batches for train set", flush=True)
         for i in trange(len(train_batch)):
 
             batch_data = train_batch[i]
@@ -166,6 +169,9 @@ class ProcessedDataset(InMemoryDataset):
         os.mkdir(os.path.join(self.processed_dir, 'val_loaders'))
         for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
             val_batch += [val_pairs.loc[list(index),:].reset_index(drop=True)]
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating batches for validation set", flush=True)
         for i in trange(len(val_batch)):
 
             batch_data = val_batch[i]
@@ -189,6 +195,9 @@ class ProcessedDataset(InMemoryDataset):
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)    
         test_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'test_loaders'))
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating batches for test set", flush=True)
         for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
             test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
         for i in trange(len(test_batch)):
@@ -326,6 +335,9 @@ class MakeKFoldData(InMemoryDataset):
             test_pairs = all_pairs.loc[list(test_index),:].reset_index(drop=True)
               
             os.mkdir(os.path.join(self.processed_dir, f"fold{fold+1}"))
+            print("", flush=True)
+            print("", flush=True)
+            print(f"generating batches for fold{fold+1} data set", flush=True)
             N = train_pairs.shape[0]//self.batch_size
             # seed random state from time
             random_state2 = np.random.RandomState(int(time.time()))
@@ -336,6 +348,9 @@ class MakeKFoldData(InMemoryDataset):
             os.mkdir(os.path.join(self.processed_dir, f"fold{fold+1}", 'train_loaders'))
             for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
                 train_batch += [train_pairs.loc[list(index),:].reset_index(drop=True)]
+            print("", flush=True)
+            print("", flush=True)
+            print(f"generating batches for train set", flush=True)
             for i in trange(len(train_batch)):
 
                 batch_data = train_batch[i]
@@ -353,13 +368,15 @@ class MakeKFoldData(InMemoryDataset):
             N = val_pairs.shape[0]//self.batch_size
             # seed random state from time
             random_state2 = np.random.RandomState(int(time.time()))
-            # Sets up 10-fold cross validation set
             cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
             
             val_batch = list()
             os.mkdir(os.path.join(self.processed_dir, f"fold{fold+1}", 'val_loaders'))
             for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
                 val_batch += [val_pairs.loc[list(index),:].reset_index(drop=True)]
+            print("", flush=True)
+            print("", flush=True)
+            print(f"generating batches for validation set", flush=True)
             for i in trange(len(val_batch)):
 
                 batch_data = val_batch[i]
@@ -377,13 +394,15 @@ class MakeKFoldData(InMemoryDataset):
             N = test_pairs.shape[0]//self.batch_size
             # seed random state from time
             random_state2 = np.random.RandomState(int(time.time()))
-            # Sets up 10-fold cross validation set
             cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)                    
                     
             test_batch = list()
             os.mkdir(os.path.join(self.processed_dir, f"fold{fold+1}", 'test_loaders'))
             for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
                 test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
+            print("", flush=True)
+            print("", flush=True)
+            print(f"generating batches for test set", flush=True)
             for i in trange(len(test_batch)):
 
                 batch_data = test_batch[i]
@@ -491,7 +510,7 @@ class MakeKRandomPairs(InMemoryDataset):
         return init_embs
     
     @staticmethod
-    def _rand_rate(n, drug_list, disease_list, idx_map):
+    def _rand_rate(n, drug_list, disease_list, idx_map, all_pairs):
 
         random.seed(int(time.time()/100))
         idtoname = {value:key for key, value in idx_map.items()}
@@ -500,13 +519,28 @@ class MakeKRandomPairs(InMemoryDataset):
         drug_n = len(drug_list)
         dis_n = len(disease_list)
 
-        # Find all permutations
-        perms = zip(random.choices(list(range(drug_n)),k=2*n), random.choices(list(range(dis_n)),k=2*n))
-        random_pairs = pd.DataFrame([(idtoname[drug_list[idx[0]]], idtoname[disease_list[idx[1]]]) for idx in list(perms)])
-        random_pairs = random_pairs.rename(columns={0:'source', 1:'target'})
+        ## create a check list for all tp an tn pairs
+        check_list_temp = {(all_pairs.loc[index,'source'],all_pairs.loc[index,'target']):1 for index in range(all_pairs.shape[0])}
+        
+        random_pairs = []
+        ## create 5 times of user's setting number
+        perms = zip(random.choices(list(range(drug_n)),k=5*n), random.choices(list(range(dis_n)),k=5*n))
+        ## select random pairs
+        count = 0
+        for idx in set(perms):
+            rand_pair = (idtoname[drug_list[idx[0]]], idtoname[disease_list[idx[1]]])
+            if rand_pair in check_list_temp:
+                next
+            else:
+                check_list_temp[rand_pair] = 1
+                random_pairs.append(rand_pair)
+                count += 1
+            if count == n:
+                break
+        random_pairs = pd.DataFrame(random_pairs).rename(columns={0:'source', 1:'target'})
         random_pairs['y'] = 1
         
-        print(f'Number of random pairs: {random_pairs.shape[0]}\n')
+        print(f'Number of random pairs: {random_pairs.shape[0]}', flush=True)
 
         return random_pairs
     
@@ -540,13 +574,15 @@ class MakeKRandomPairs(InMemoryDataset):
         N = train_pairs.shape[0]//self.batch_size
         # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
 
         train_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'train_loaders'))
         for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
             train_batch += [train_pairs.loc[list(index),:].reset_index(drop=True)]
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating batches for train set", flush=True)
         for i in trange(len(train_batch)):
 
             batch_data = train_batch[i]
@@ -565,7 +601,6 @@ class MakeKRandomPairs(InMemoryDataset):
         N = test_pairs.shape[0]//self.batch_size
         # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)  
 
         
@@ -573,6 +608,9 @@ class MakeKRandomPairs(InMemoryDataset):
         os.mkdir(os.path.join(self.processed_dir, 'test_loaders'))
         for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
             test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating batches for test set", flush=True)
         for i in trange(len(test_batch)):
 
             batch_data = test_batch[i]
@@ -586,22 +624,20 @@ class MakeKRandomPairs(InMemoryDataset):
             filename = 'test_loader' + '_' + str(i) + '.pkl'
             with open(os.path.join(self.processed_dir, 'test_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
-        
-        # generate random pairs of drug and disease
-        disease_list = [node_id for node_id, node_type in id_to_type.items() if node_type=='disease' or node_type=='phenotypic_feature']
-        drug_list = [node_id for node_id, node_type in id_to_type.items() if node_type=='chemical_substance']
-        random_pairs = self._rand_rate(self.N, drug_list, disease_list, idx_map)
-        
+
+
         N = self.tp_pairs.shape[0]//self.batch_size
         # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
 
         tp_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'tp_loaders'))
         for _, index in cv2.split(np.array(list(self.tp_pairs.index)), [1]*self.tp_pairs.shape[0]):
             tp_batch += [self.tp_pairs.loc[list(index),:].reset_index(drop=True)]
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating batches for true positive set", flush=True)
         for i in trange(len(tp_batch)):
 
             batch_data = tp_batch[i]
@@ -619,13 +655,15 @@ class MakeKRandomPairs(InMemoryDataset):
         N = self.tn_pairs.shape[0]//self.batch_size
         # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
 
         tn_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'tn_loaders'))
         for _, index in cv2.split(np.array(list(self.tn_pairs.index)), [1]*self.tn_pairs.shape[0]):
             tn_batch += [self.tn_pairs.loc[list(index),:].reset_index(drop=True)]
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating batches for true negative set", flush=True)
         for i in trange(len(tn_batch)):
 
             batch_data = tn_batch[i]
@@ -639,17 +677,28 @@ class MakeKRandomPairs(InMemoryDataset):
             filename = 'tn_loader' + '_' + str(i) + '.pkl'
             with open(os.path.join(self.processed_dir, 'tn_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
-                       
+
+                
+        # generate random pairs of drug and disease
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating random pairs of drugs and diseases", flush=True)
+        disease_list = [node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Disease' or node_type=='biolink:PhenotypicFeature' or node_type=='biolink:DiseaseOrPhenotypicFeature']
+        drug_list = [node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Drug' or node_type=='biolink:ChemicalSubstance']
+        random_pairs = self._rand_rate(self.N, drug_list, disease_list, idx_map, all_pairs)
+        
         N = random_pairs.shape[0]//self.batch_size
         # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
-        # Sets up 10-fold cross validation set
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
 
         rp_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'rp_loaders'))
         for _, index in cv2.split(np.array(list(random_pairs.index)), [1]*random_pairs.shape[0]):
             rp_batch += [random_pairs.loc[list(index),:].reset_index(drop=True)]
+        print("", flush=True)
+        print("", flush=True)
+        print(f"generating batches for random pair set", flush=True)
         for i in trange(len(rp_batch)):
 
             batch_data = rp_batch[i]

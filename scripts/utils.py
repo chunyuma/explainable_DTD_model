@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 import pandas as pd
 import re
+import numpy as np
 from sklearn.metrics import f1_score
 plt.switch_backend('agg')
 

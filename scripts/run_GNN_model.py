@@ -255,6 +255,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_known_embedding", action="store_true", help="Use known inital embeeding", default=False)
     parser.add_argument("--num_epochs", type=int, help="Number of epochs to train model", default=50)
     parser.add_argument("--Kfold", type=int, help="Number of fold", default=10)
+    parser.add_argument("--n_random_pairs", type=int, help="Number of random pairs for mode 3", default=20000)
     parser.add_argument("--emb_size", type=int, help="Embedding vertor dimension", default=512)
     parser.add_argument("--batch_size", type=int, help="Batch size of training data", default=512)
     parser.add_argument("--num_layers", type=int, help="Number of GNN layers to train model", default=3)
@@ -294,6 +295,7 @@ if __name__ == "__main__":
     factor = args.factor
     early_stop_n = args.early_stop_n
     Kfold = args.Kfold
+    n_random_pairs = args.n_random_pairs
 
     if args.use_gpu and torch.cuda.is_available():
         use_gpu = True
@@ -521,7 +523,7 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'randompairs_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
+        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size, N=n_random_pairs)
         print('Pre-processing data completed', flush=True)
         del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
