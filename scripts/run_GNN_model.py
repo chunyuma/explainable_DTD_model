@@ -162,6 +162,11 @@ def evaluate(loader, use_gpu, data_type = 'train'):
     predictions = []
     labels = []
 
+    if use_gpu is True:
+        device = torch.device('cuda:0')
+    else:
+        device = torch.device('cpu')
+
     with torch.no_grad():
         for batch_idx, (n_id, adjs) in enumerate(loader):
             n_id = n_id[0].to(device)

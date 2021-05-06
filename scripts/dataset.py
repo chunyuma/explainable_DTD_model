@@ -71,7 +71,10 @@ class ProcessedDataset(InMemoryDataset):
                 init_emb = torch.tensor(np.vstack(list(known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'array'])), dtype=torch.float32)
                 init_embs[category] = (init_emb, curie_ids)
                 ulabels.remove(category)
-                
+            
+            print(f"Number of nodes that not uninitialized with known embeddings: {len(ulabels)}")
+
+
         for label in ulabels:
             curie_ids = node_info.loc[node_info.category.isin([label]),'id']
             curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
@@ -447,7 +450,7 @@ class MakeKRandomPairs(InMemoryDataset):
         self.dim = dim
         self.known_int_emb_dict = known_int_emb_dict
         self.N = N
-        self.worker = 4 #multiprocessing.cpu_count()
+        self.worker = 1 #multiprocessing.cpu_count()
         self.layer_size = []
         for _ in range(layers):
             self.layer_size += [-1]
