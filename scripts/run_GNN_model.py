@@ -378,7 +378,7 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(os.path.join(args.output_folder, folder_name, model_name))['model_state_dict'])
 
         print("")
-        print('#### Evaluate model with AUC score ####')
+        print('#### Evaluate best model with AUC score ####')
         train_acc, train_f1score, train_auc_score = evaluate(train_loader, use_gpu, train_batch)
         val_acc, val_f1score, val_auc_score = evaluate(val_loader, use_gpu, val_batch)
         test_acc, test_f1score, test_auc_score = evaluate(test_loader, use_gpu, test_batch)
@@ -619,15 +619,12 @@ if __name__ == "__main__":
 
 
         print("")
-        print('#### Evaluate model with AUC score ####')
+        print('#### Evaluate best model with AUC score ####')
         train_acc, train_f1score, train_auc_score = evaluate(train_loader, use_gpu, train_batch)
         test_acc, test_f1score, test_auc_score = evaluate(test_loader, use_gpu, test_batch)
-        tp_acc, tp_f1score, tp_auc_score = evaluate(tp_loader, use_gpu, tp_batch)
-        tn_acc, tn_f1score, tn_auc_score = evaluate(tn_loader, use_gpu, tn_batch)
-        rp_acc, rp_f1score, rp_auc_score = evaluate(rp_loader, use_gpu, rp_batch)
-        print(f'Final AUC: Train Auc: {train_auc_score:.5f}, Test Auc: {test_auc_score:.5f}, TP AUC: {tp_auc_score:.5f}, TN AUC: {tn_auc_score:.5f}, RP AUC: {rp_auc_score:.5f}')
-        print(f'Final Accuracy: Train Accuracy: {train_acc:.5f}, Test Accuracy: {test_acc:.5f}, TP Accuracy: {tp_acc:.5f}, TN Accuracy: {tn_acc:.5f}, RP Accuracy: {rp_acc:.5f}')
-        print(f'Final F1score: Train F1score: {train_f1score:.5f}, Test F1score: {test_f1score:.5f}, TP F1score: {test_f1score:.5f}, TN F1score: {test_f1score:.5f}, Test F1score: {test_f1score:.5f}')
+        print(f'Final AUC: Train Auc: {train_auc_score:.5f}, Test Auc: {test_auc_score:.5f}')
+        print(f'Final Accuracy: Train Accuracy: {train_acc:.5f}, Test Accuracy: {test_acc:.5f}')
+        print(f'Final F1score: Train F1score: {train_f1score:.5f}, Test F1score: {test_f1score:.5f}')
         
     else:
         print('Running mode only accepts 1 or 2 or 3')
