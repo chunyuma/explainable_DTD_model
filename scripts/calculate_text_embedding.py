@@ -13,7 +13,7 @@ from sklearn.decomposition import PCA
 
 
 def get_bert_embedding(texts, tokenizer, model, device):
-    inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+    inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=512)
     inputs = inputs.to(device)
     with torch.no_grad():
         embeddings = model(**inputs, output_hidden_states=True, return_dict=True).pooler_output
@@ -95,15 +95,17 @@ if __name__ == "__main__":
 
     else:
         # writing files
-        with open("data/text_embedding/id2index.json", "w") as f:
+        with open("data/text_embedding/ca.json", "w") as f:
             json.dump(id2index, f)
         with open("data/text_embedding/index2id.json", "w") as f:
             json.dump(index2id, f)
 
         device = "cuda" if args.use_gpu else "cpu"
 
-        tokenizer = AutoTokenizer.from_pretrained("princeton-nlp/sup-simcse-roberta-base")
-        model = AutoModel.from_pretrained("princeton-nlp/sup-simcse-roberta-base")
+        # tokenizer = AutoTokenizer.from_pretrained("princeton-nlp/sup-simcse-roberta-base")
+        # model = AutoModel.from_pretrained("princeton-nlp/sup-simcse-roberta-base")
+        tokenizer = AutoTokenizer.from_pretrained("microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext")
+        model = AutoModel.from_pretrained("microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext")
         model.to(device)
 
         ori_embedding = np.zeros([len(texts), 768])
