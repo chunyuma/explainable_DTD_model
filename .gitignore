@@ -3,5 +3,7 @@ main.sh
 nohup.out
 data*
 results/
+__pycache*
+*.pyc
 scripts/__pycache__
 scripts/.ipynb_checkpoints
