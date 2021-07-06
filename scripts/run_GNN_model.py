@@ -156,7 +156,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
     return [train_loss, train_acc, val_loss, val_acc]
 
 
-def evaluate(loader, use_gpu, data_type = 'train'): 
+def evaluate(loader, use_gpu, batch_data): 
     model.eval()
 
     predictions = []
@@ -171,12 +171,7 @@ def evaluate(loader, use_gpu, data_type = 'train'):
         for batch_idx, (n_id, adjs) in enumerate(loader):
             n_id = n_id[0].to(device)
             adjs = [(adj[0][0],(int(adj[1][0]),int(adj[1][1]))) for adj in adjs]
-            if data_type == 'train':
-                link = train_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
-            elif data_type == 'val':
-                link = val_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
-            elif data_type == 'test':
-                link = test_batch[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
+            link = batch_data[batch_idx][['source','target']].apply(lambda row: [idx_map.get(row[0]),idx_map.get(row[1])], axis=1, result_type='expand').rename(columns={0: "source", 1: "target"})
             link = torch.tensor(np.array(link), dtype=torch.long).to(device)
 #             x_n_id = x[n_id]
 
@@ -188,12 +183,7 @@ def evaluate(loader, use_gpu, data_type = 'train'):
                 pred = torch.sigmoid(model(all_init_mats, adjs, link, n_id, all_sorted_indexes)).detach().cpu().numpy()
 #                 pred = model(x_n_id, adjs, link, n_id).detach().cpu().numpy()
 
-            if data_type == 'train':
-                label = np.array(train_batch[batch_idx]['y'])
-            elif data_type == 'val':
-                label = np.array(val_batch[batch_idx]['y'])
-            elif data_type == 'test':
-                label = np.array(test_batch[batch_idx]['y'])
+            label = np.array(batch_data[batch_idx]['y'])
 
             predictions.append(pred)
             labels.append(label)
@@ -260,6 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_known_embedding", action="store_true", help="Use known inital embeeding", default=False)
     parser.add_argument("--num_epochs", type=int, help="Number of epochs to train model", default=50)
     parser.add_argument("--Kfold", type=int, help="Number of fold", default=10)
+    parser.add_argument("--n_random_pairs", type=int, help="Number of random pairs for mode 3", default=20000)
     parser.add_argument("--emb_size", type=int, help="Embedding vertor dimension", default=512)
     parser.add_argument("--batch_size", type=int, help="Batch size of training data", default=512)
     parser.add_argument("--num_layers", type=int, help="Number of GNN layers to train model", default=3)
@@ -299,6 +290,7 @@ if __name__ == "__main__":
     factor = args.factor
     early_stop_n = args.early_stop_n
     Kfold = args.Kfold
+    n_random_pairs = args.n_random_pairs
 
     if args.use_gpu and torch.cuda.is_available():
         use_gpu = True
@@ -386,11 +378,11 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(os.path.join(args.output_folder, folder_name, model_name))['model_state_dict'])
 
         print("")
-        print('#### Evaluate model with AUC score ####')
-        train_acc, train_f1score, train_auc_score = evaluate(train_loader, use_gpu, data_type = 'train')
-        val_acc, val_f1score, val_auc_score = evaluate(val_loader, use_gpu, data_type = 'val')
-        test_acc, test_f1score, test_auc_score = evaluate(test_loader, use_gpu, data_type = 'test')
-        print(f'Final AUC: Train Auc: {train_auc:.5f}, Val Auc: {val_auc:.5f}, Test Auc: {test_auc:.5f}')
+        print('#### Evaluate best model with AUC score ####')
+        train_acc, train_f1score, train_auc_score = evaluate(train_loader, use_gpu, train_batch)
+        val_acc, val_f1score, val_auc_score = evaluate(val_loader, use_gpu, val_batch)
+        test_acc, test_f1score, test_auc_score = evaluate(test_loader, use_gpu, test_batch)
+        print(f'Final AUC: Train Auc: {train_auc_score:.5f}, Val Auc: {val_auc_score:.5f}, Test Auc: {test_auc_score:.5f}')
         print(f'Final Accuracy: Train Accuracy: {train_acc:.5f}, Val Accuracy: {val_acc:.5f}, Test Accuracy: {test_acc:.5f}')
         print(f'Final F1score: Train F1score: {train_f1score:.5f}, Val F1score: {val_f1score:.5f}, Test F1score: {test_f1score:.5f}')
 
@@ -526,7 +518,7 @@ if __name__ == "__main__":
 
         processdata_path = os.path.join(args.data_path, f'randompairs_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}')
         print('Start pre-processing data', flush=True)
-        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size)
+        dataset = MakeKRandomPairs(root=processdata_path, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, batch_size=batch_size, layers=num_layers, dim=init_emb_size, N=n_random_pairs)
         print('Pre-processing data completed', flush=True)
         del raw_edges, node_info, tp_pairs, tn_pairs ## remove the unused varaibles to release memory
         data = dataset.get_dataset()
@@ -624,6 +616,15 @@ if __name__ == "__main__":
                 ["Random Pairs",
                 "True Positives", 
                 "True Negatives"])
+
+
+        print("")
+        print('#### Evaluate best model with AUC score ####')
+        train_acc, train_f1score, train_auc_score = evaluate(train_loader, use_gpu, train_batch)
+        test_acc, test_f1score, test_auc_score = evaluate(test_loader, use_gpu, test_batch)
+        print(f'Final AUC: Train Auc: {train_auc_score:.5f}, Test Auc: {test_auc_score:.5f}')
+        print(f'Final Accuracy: Train Accuracy: {train_acc:.5f}, Test Accuracy: {test_acc:.5f}')
+        print(f'Final F1score: Train F1score: {train_f1score:.5f}, Test F1score: {test_f1score:.5f}')
         
     else:
         print('Running mode only accepts 1 or 2 or 3')

@@ -1,24 +1,16 @@
 import sys
 import os
 import pandas as pd
-import numpy as np
-import scipy as sci
-import matplotlib.pyplot as plt
-plt.switch_backend('agg')
-from mpl_toolkits.mplot3d import Axes3D
-import sklearn as skl
-import sklearn.linear_model as lm
-import sklearn.externals as ex
-import sklearn.ensemble as ensemble
-import sklearn.metrics as met
-import sklearn.model_selection as ms
-import time
+from neo4j import GraphDatabase
 import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--tp", type=str, nargs='*', help="The filenames or paths to the true positive txts", default=['semmed_tp.txt','mychem_tp.txt','mychem_tp_umls.txt','NDF_TP.txt'])
 parser.add_argument("--tn", type=str, nargs='*', help="The filenames or paths to the true negative txts", default=['semmed_tn.txt','mychem_tn.txt','mychem_tn_umls.txt','NDF_TN.txt'])
 parser.add_argument("--graph", type=str, help="The filename or path of graph edge file", default="graph_edges.txt")
+parser.add_argument("--use_input_training_edges", action="store_true", help="Use the training edges from Mychem, SemMedDB and NDF", default=False)
+parser.add_argument("--use_graph_edges", action="store_true", help="Use the existing edges in graph as training data", default=False)
+parser.add_argument("--select_edges_with_pmids_only", action="store_true", help="Use the existing edges which have to have pmids in graph as training data", default=False)
 parser.add_argument("--tncutoff", type=int, help="A positive integer for the true negative cutoff of SemMedDB hot counts to include in analysis", default=2)
 parser.add_argument("--tpcutoff", type=int, help="A positive integer for the true positive cutoff of SemMedDB hot counts to include in analysis", default=12)
 parser.add_argument("--output", type=str, help="The path of output folder.", default="./")
@@ -29,60 +21,145 @@ all_nodes = set()
 all_nodes.update(set(graph_edge.source))
 all_nodes.update(set(graph_edge.target))
 
-TP_list = []
-TN_list = []
-
-# generate list of true positive and true negative data frames
-for i in range(len(args.tp)):
-    temp = pd.read_csv(args.tp[i], sep="\t", index_col=None)
-    temp = temp.drop_duplicates().reset_index().drop(columns=['index'])
-    select_rows = list(all_nodes.intersection(set(temp['source'])))
-    temp = temp.set_index('source').loc[select_rows,:].reset_index()
-    select_rows = list(all_nodes.intersection(set(temp['target'])))
-    temp = temp.set_index('target').loc[select_rows,:].reset_index()
-    if temp.shape[0]!=0:
-        TP_list += [temp]
-for i in range(len(args.tn)):
-    temp = pd.read_csv(args.tn[i], sep="\t", index_col=None)
-    temp = temp.drop_duplicates().reset_index().drop(columns=['index'])
-    select_rows = list(all_nodes.intersection(set(temp['source'])))
-    temp = temp.set_index('source').loc[select_rows,:].reset_index()
-    select_rows = list(all_nodes.intersection(set(temp['target'])))
-    temp = temp.set_index('target').loc[select_rows,:].reset_index()
-    if temp.shape[0]!=0:
-        TN_list += [temp]
-
 id_list_class_dict = dict()
 
-# Generate true negative training set by concatinating source-target pair vectors
-for TN in TN_list:
-    for row in range(len(TN)):
-        if 'count' in list(TN):
-            if int(TN['count'][row]) < args.tncutoff:
-                continue
+if args.use_input_training_edges:
 
-        source_curie = TN['source'][row]
-        target_curie = TN['target'][row]
+    TP_list = []
+    TN_list = []
 
-        if (source_curie, target_curie) not in id_list_class_dict:
-            id_list_class_dict[source_curie, target_curie] = 0
+    # generate list of true positive and true negative data frames
+    for i in range(len(args.tp)):
+        temp = pd.read_csv(args.tp[i], sep="\t", index_col=None)
+        temp = temp.drop_duplicates().reset_index().drop(columns=['index'])
+        select_rows = list(all_nodes.intersection(set(temp['source'])))
+        temp = temp.set_index('source').loc[select_rows,:].reset_index()
+        select_rows = list(all_nodes.intersection(set(temp['target'])))
+        temp = temp.set_index('target').loc[select_rows,:].reset_index()
+        if temp.shape[0]!=0:
+            TP_list += [temp]
+    for i in range(len(args.tn)):
+        temp = pd.read_csv(args.tn[i], sep="\t", index_col=None)
+        temp = temp.drop_duplicates().reset_index().drop(columns=['index'])
+        select_rows = list(all_nodes.intersection(set(temp['source'])))
+        temp = temp.set_index('source').loc[select_rows,:].reset_index()
+        select_rows = list(all_nodes.intersection(set(temp['target'])))
+        temp = temp.set_index('target').loc[select_rows,:].reset_index()
+        if temp.shape[0]!=0:
+            TN_list += [temp]
 
-# Generate true positive training set by concatinating source-target pair vectors
-for TP in TP_list:
-    for row in range(len(TP)):
-        if 'count' in list(TP):
-            if int(TP['count'][row]) < args.tpcutoff:
-                continue
+    id_list_class_dict = dict()
 
-        source_curie = TP['source'][row]
-        target_curie = TP['target'][row]
+    # Generate true negative training set by concatinating source-target pair vectors
+    for TN in TN_list:
+        for row in range(len(TN)):
+            if 'count' in list(TN):
+                if int(TN['count'][row]) < args.tncutoff:
+                    continue
 
-        if (source_curie, target_curie) not in id_list_class_dict:
-            id_list_class_dict[source_curie, target_curie] = 1
-        else:
-            if id_list_class_dict[source_curie, target_curie] == 0:
-                del id_list_class_dict[source_curie, target_curie]
+            source_curie = TN['source'][row]
+            target_curie = TN['target'][row]
 
+            if (source_curie, target_curie) not in id_list_class_dict:
+                id_list_class_dict[source_curie, target_curie] = 0
+            else:
+                if id_list_class_dict[source_curie, target_curie] != 0:
+                    del id_list_class_dict[source_curie, target_curie]
+
+    # Generate true positive training set by concatinating source-target pair vectors
+    for TP in TP_list:
+        for row in range(len(TP)):
+            if 'count' in list(TP):
+                if int(TP['count'][row]) < args.tpcutoff:
+                    continue
+
+            source_curie = TP['source'][row]
+            target_curie = TP['target'][row]
+
+            if (source_curie, target_curie) not in id_list_class_dict:
+                id_list_class_dict[source_curie, target_curie] = 1
+            else:
+                if id_list_class_dict[source_curie, target_curie] != 1:
+                    del id_list_class_dict[source_curie, target_curie]
+
+                    
+if args.use_graph_edges:
+
+    neo4j_bolt = os.getenv('neo4j_bolt')
+    neo4j_username = os.getenv('neo4j_username')
+    neo4j_password = os.getenv('neo4j_password')
+                    
+
+    ## Connect to neo4j database
+    driver = GraphDatabase.driver(neo4j_bolt, auth=(neo4j_username, neo4j_password))
+    session = driver.session()
+
+    if args.select_edges_with_pmids_only:
+    
+        ## add existing 'treat' edge between drug and disease node pair in canonicalized kg
+        query = f"match (disease) where (disease.category='biolink:Disease' or disease.category='biolink:PhenotypicFeature' or disease.category='biolink:DiseaseOrPhenotypicFeature') with collect(distinct disease.id) as disease_ids match (drug) where (drug.category='biolink:Drug' or drug.category='biolink:ChemicalSubstance') with collect(distinct drug.id) as drug_ids, disease_ids as disease_ids match (m1)<-[r]-(m2) where m1<>m2 and (m1.id in disease_ids and m2.id in drug_ids and (r.predicate='biolink:treats' or r.predicate='biolink:disrupts' or r.predicate='biolink:prevents') and size(r.publications)>={args.tpcutoff}) with distinct m1 as node1, m2 as node2 return node2.id as source, node1.id as target"
+        res = session.run(query)
+        temp = pd.DataFrame(res.data())
+        for row in range(len(temp)):
+            source_curie = temp['source'][row]
+            target_curie = temp['target'][row]
+
+            if (source_curie, target_curie) not in id_list_class_dict:
+                id_list_class_dict[source_curie, target_curie] = 0
+            else:
+                if id_list_class_dict[source_curie, target_curie] != 0:
+                    del id_list_class_dict[source_curie, target_curie]
+
+    else:
+        
+        ## add existing 'treat' edge between drug and disease node pair in canonicalized kg
+        query = f"match (disease) where (disease.category='biolink:Disease' or disease.category='biolink:PhenotypicFeature' or disease.category='biolink:DiseaseOrPhenotypicFeature') with collect(distinct disease.id) as disease_ids match (drug) where (drug.category='biolink:Drug' or drug.category='biolink:ChemicalSubstance') with collect(distinct drug.id) as drug_ids, disease_ids as disease_ids match (m1)<-[r]-(m2) where m1<>m2 and (m1.id in disease_ids and m2.id in drug_ids and (r.predicate='biolink:treats' or r.predicate='biolink:disrupts' or r.predicate='biolink:prevents')) with distinct m1 as node1, m2 as node2 return node2.id as source, node1.id as target"
+        res = session.run(query)
+        temp = pd.DataFrame(res.data())
+        for row in range(len(temp)):
+            source_curie = temp['source'][row]
+            target_curie = temp['target'][row]
+
+            if (source_curie, target_curie) not in id_list_class_dict:
+                id_list_class_dict[source_curie, target_curie] = 0
+            else:
+                if id_list_class_dict[source_curie, target_curie] != 0:
+                    del id_list_class_dict[source_curie, target_curie]
+
+                    
+    if args.select_edges_with_pmids_only:
+    
+        ## add existing 'not treat' edge between drug and disease node pair in canonicalized kg
+        query = f"match (disease) where (disease.category='biolink:Disease' or disease.category='biolink:PhenotypicFeature' or disease.category='biolink:DiseaseOrPhenotypicFeature') with collect(distinct disease.id) as disease_ids match (drug) where (drug.category='biolink:Drug' or drug.category='biolink:ChemicalSubstance') with collect(distinct drug.id) as drug_ids, disease_ids as disease_ids match (m1)<-[r]-(m2) where m1<>m2 and (m1.id in disease_ids and m2.id in drug_ids and (r.predicate='biolink:causes' or r.predicate='biolink:predisposes' or r.predicate='biolink:contraindicated_for') and size(r.publications)>={args.tncutoff}) with distinct m1 as node1, m2 as node2 return node2.id as source, node1.id as target"
+        res = session.run(query)
+        temp = pd.DataFrame(res.data())
+        for row in range(len(temp)):
+            source_curie = temp['source'][row]
+            target_curie = temp['target'][row]
+
+            if (source_curie, target_curie) not in id_list_class_dict:
+                id_list_class_dict[source_curie, target_curie] = 1
+            else:
+                if id_list_class_dict[source_curie, target_curie] != 1:
+                    del id_list_class_dict[source_curie, target_curie]
+                    
+    else:
+
+        ## add existing 'not treat' edge between drug and disease node pair in canonicalized kg
+        query = f"match (disease) where (disease.category='biolink:Disease' or disease.category='biolink:PhenotypicFeature' or disease.category='biolink:DiseaseOrPhenotypicFeature') with collect(distinct disease.id) as disease_ids match (drug) where (drug.category='biolink:Drug' or drug.category='biolink:ChemicalSubstance') with collect(distinct drug.id) as drug_ids, disease_ids as disease_ids match (m1)<-[r]-(m2) where m1<>m2 and (m1.id in disease_ids and m2.id in drug_ids and (r.predicate='biolink:causes' or r.predicate='biolink:predisposes' or r.predicate='biolink:contraindicated_for')) with distinct m1 as node1, m2 as node2 return node2.id as source, node1.id as target"
+        res = session.run(query)
+        temp = pd.DataFrame(res.data())
+        for row in range(len(temp)):
+            source_curie = temp['source'][row]
+            target_curie = temp['target'][row]
+
+            if (source_curie, target_curie) not in id_list_class_dict:
+                id_list_class_dict[source_curie, target_curie] = 1
+            else:
+                if id_list_class_dict[source_curie, target_curie] != 1:
+                    del id_list_class_dict[source_curie, target_curie]
+        
+        
 output_TP = []
 output_TN = []
 for key, value in id_list_class_dict.items():

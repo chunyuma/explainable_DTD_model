@@ -1,5 +1,7 @@
 data_*
-data/
-dataold/
-results/
 main.sh
+nohup.out
+data*
+results/
+scripts/__pycache__
+scripts/.ipynb_checkpoints
