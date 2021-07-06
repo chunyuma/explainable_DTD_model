@@ -1,6 +1,7 @@
 import pickle
 from datetime import timedelta
 from torch.utils.data import Dataset
+from torch import tensor
 import matplotlib.pyplot as plt
 import pandas as pd
 import re
@@ -11,17 +12,65 @@ plt.switch_backend('agg')
 def calculate_f1score(preds, labels, threshold=0.5):
     preds = np.array(preds)
     labels = np.array(labels)
-    preds = (np.array(preds)>=threshold).astype(int)
+    preds = (np.array(preds)>threshold).astype(int)
     f1score = f1_score(labels, preds, average='binary')
     return f1score
 
 def calculate_acc(preds, labels, threshold=0.5):
     preds = np.array(preds)
     labels = np.array(labels)
-    preds = (np.array(preds)>=threshold).astype(int)
+    preds = (np.array(preds)>threshold).astype(int)
     acc = (preds == labels).astype(float).mean()
     return acc
 
+def calculate_mrr(drug_disease_pairs, random_pairs):
+    '''
+    This function is used to calculate Mean Reciprocal Rank (MRR)
+    reference paper: Knowledge Graph Embedding for Link Prediction: A Comparative Analysis
+    '''
+    
+    ## only use tp pairs
+    drug_disease_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
+    
+    Q_n = len(drug_disease_pairs)
+    score = 0
+    for index in range(Q_n):
+        query_drug = drug_disease_pairs['source'][index]
+        this_query_score = drug_disease_pairs['prob'][index]
+        all_random_probs_for_this_query = list(random_pairs.loc[random_pairs['source'].isin([query_drug]),'prob'])
+        all_in_list = [this_query_score] + all_random_probs_for_this_query
+        rank = list(tensor(all_in_list).sort(descending=True).indices.numpy()).index(0)+1
+        score += 1/rank
+        
+    final_score = score/Q_n
+    
+    return final_score
+
+def calculate_hitk(drug_disease_pairs, random_pairs, k=1):
+    '''
+    This function is used to calculate Hits@K (H@K)
+    reference paper: Knowledge Graph Embedding for Link Prediction: A Comparative Analysis
+    '''
+    
+    ## only use tp pairs
+    drug_disease_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
+    
+    Q_n = len(drug_disease_pairs)
+    count = 0
+    for index in range(Q_n):
+        query_drug = drug_disease_pairs['source'][index]
+        this_query_score = drug_disease_pairs['prob'][index]
+        all_random_probs_for_this_query = list(random_pairs.loc[random_pairs['source'].isin([query_drug]),'prob'])
+        all_in_list = [this_query_score] + all_random_probs_for_this_query
+        rank = list(tensor(all_in_list).sort(descending=True).indices.numpy()).index(0)+1
+        if rank <= k:
+            count += 1 
+        
+    final_score = count/Q_n
+    
+    return final_score
+    
+    
 def format_time(elapsed):
     # Round to the nearest second.
     elapsed_rounded = int(round((elapsed)))
@@ -40,7 +89,7 @@ class DataWrapper(Dataset):
         n_id, adjs = pickle.load(open(self.paths[idx],'rb'))
         return (n_id, adjs)
 
-def plot_cutoff(dfs, outloc, title_post = ["Random Pairings", "True Negatives", "True Positives"], print_flag=True):
+def plot_cutoff(dfs, plot_title, outfile_path, title_post = ["Random Pairings", "True Negatives", "True Positives"], print_flag=True):
 
     color = ["xkcd:dark magenta","xkcd:dark turquoise","xkcd:azure","xkcd:purple blue","xkcd:scarlet",
         "xkcd:orchid", "xkcd:pumpkin", "xkcd:gold", "xkcd:peach", "xkcd:neon green", "xkcd:grey blue"]
@@ -60,14 +109,15 @@ def plot_cutoff(dfs, outloc, title_post = ["Random Pairings", "True Negatives", 
     plt.ylim([0, 1])
     plt.xlabel('Cutoff Prob')
     plt.ylabel('Rate of Postitive Predictions')
-    plt.title('Prediction Rates of Treats Class')
+    plt.title(plot_title)
     plt.legend(loc="lower left")
-    outloc = outloc + '/Figure1.png'
-    plt.savefig(outloc)
+    plt.savefig(outfile_path)
     plt.close()
 
 def clean_up_desc(string):
     if type(string) is str:
+        # Removes all of the "UMLS Semantic Type: UMLS_STY:XXXX;" bits from descriptions
+        string = re.sub("UMLS Semantic Type: UMLS_STY:[a-zA-Z][0-9]{3}[;]?", "", string).strip().strip(";")
         if string == 'None':
             return ''
         elif len(re.findall("^COMMENTS: ", string)) != 0:

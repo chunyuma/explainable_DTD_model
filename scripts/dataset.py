@@ -16,7 +16,7 @@ import time
 import random
 
 class ProcessedDataset(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
+    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100, known_int_emb_dict=None, N=500):
         if not sum(train_val_test_size)==1:
             raise AssertionError("The sum of percents in train_val_test_size should be 1")
 #         if known_int_emb_dict is not None:
@@ -27,9 +27,11 @@ class ProcessedDataset(InMemoryDataset):
         self.batch_size = batch_size
         self.tp_pairs = tp_pairs
         self.tn_pairs = tn_pairs
+        self.all_known_tp_pairs = all_known_tp_pairs
         self.dim = dim
         self.known_int_emb_dict = known_int_emb_dict
         self.train_val_test_size = train_val_test_size
+        self.N = N
         self.worker = 4 #multiprocessing.cpu_count()
         self.layer_size = []
         for _ in range(layers):
@@ -42,7 +44,7 @@ class ProcessedDataset(InMemoryDataset):
         return []
     @property
     def processed_file_names(self):
-        return ['processed_kg.dataset', 'map_files.pkl', 'train_val_test.pkl']
+        return ['processed_kg.dataset', 'map_files.pkl', 'train_val_test_random.pkl']
 
     def download(self):
         pass
@@ -68,11 +70,11 @@ class ProcessedDataset(InMemoryDataset):
                     print(f"Not all curies with cateogry {category} have known intial embedding")    
                 curie_ids = known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'id']
                 curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
-                init_emb = torch.tensor(np.vstack(list(known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'array'])), dtype=torch.float32)
+                init_emb = torch.tensor(np.vstack(list(known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'array'])).astype(float), dtype=torch.float32)
                 init_embs[category] = (init_emb, curie_ids)
                 ulabels.remove(category)
             
-            print(f"Number of nodes that not uninitialized with known embeddings: {len(ulabels)}")
+            print(f"Number of categories that are not uninitialized with known embeddings: {len(ulabels)}")
 
 
         for label in ulabels:
@@ -102,6 +104,41 @@ class ProcessedDataset(InMemoryDataset):
         batch = [pd.concat([tp.loc[tp_batch[i],],tn.loc[tn_batch[i],]],axis=0).sample(frac=1).reset_index().drop(columns=['index']) for i in range(len(tp_batch))]
         return batch
 
+
+    @staticmethod
+    def _rand_rate(n, test_pairs, disease_list, idx_map, all_known_tp_pairs):
+
+        random.seed(int(time.time()/100))
+        idtoname = {value:key for key, value in idx_map.items()}
+        ## only use the tp data
+        test_pairs = test_pairs.loc[test_pairs['y'] == 1,:].reset_index(drop=True)
+        drug_in_test_data = list(set(test_pairs['source']))
+        disease_name_list = list(map(idtoname.get, disease_list))
+        
+        ## create a check list for all tp an tn pairs
+        check_list_temp = {(all_known_tp_pairs.loc[index,'source'],all_known_tp_pairs.loc[index,'target']):1 for index in range(all_known_tp_pairs.shape[0])}
+        
+        random_pairs = []
+        for drug in drug_in_test_data:
+            count = 0
+            temp_dict = dict()
+            random.shuffle(disease_name_list)
+            for disease in disease_name_list:
+                if (drug, disease) not in check_list_temp and (drug, disease) not in temp_dict:
+                    temp_dict[(drug, disease)] = 1
+                    count += 1
+                if count == n:
+                    break
+            random_pairs += [pd.DataFrame(temp_dict.keys())]
+        
+        random_pairs = pd.concat(random_pairs).reset_index(drop=True).rename(columns={0:'source',1:'target'})
+        random_pairs['y'] = 1
+        
+        print(f'Number of random pairs: {random_pairs.shape[0]}', flush=True)
+
+        return random_pairs
+    
+    
     def process(self):
         all_nodes = set()
         all_nodes.update(set(self.raw_edges.source))
@@ -121,6 +158,9 @@ class ProcessedDataset(InMemoryDataset):
         
         ## split dataset to training, validation and test according 
         # seed random state from time
+        ### generate train, validation and test pairs
+        print("", flush=True)
+        print(f"generate train, validation and test pairs", flush=True)
         random_state1 = np.random.RandomState(int(time.time()))
         self.tp_pairs['y'] = 1
         self.tn_pairs['y'] = 0
@@ -134,6 +174,12 @@ class ProcessedDataset(InMemoryDataset):
         test_pairs = val_test_pairs.loc[list(test_index),:].reset_index(drop=True)
         
         
+        ### generate random pairs for MRR or Hit@K evaluation
+        print("", flush=True)
+        print(f"generate random pairs for MRR or Hit@K evaluation", flush=True)
+        disease_list = list(set([node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Disease' or node_type=='biolink:PhenotypicFeature' or node_type=='biolink:DiseaseOrPhenotypicFeature']))
+        random_pairs = self._rand_rate(self.N, test_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        
         ## split training set according to the given batch size
         N = train_pairs.shape[0]//self.batch_size
         # seed random state from time
@@ -144,7 +190,6 @@ class ProcessedDataset(InMemoryDataset):
         os.mkdir(os.path.join(self.processed_dir, 'train_loaders'))
         for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
             train_batch += [train_pairs.loc[list(index),:].reset_index(drop=True)]
-        print("", flush=True)
         print("", flush=True)
         print(f"generating batches for train set", flush=True)
         for i in trange(len(train_batch)):
@@ -173,7 +218,6 @@ class ProcessedDataset(InMemoryDataset):
         for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
             val_batch += [val_pairs.loc[list(index),:].reset_index(drop=True)]
         print("", flush=True)
-        print("", flush=True)
         print(f"generating batches for validation set", flush=True)
         for i in trange(len(val_batch)):
 
@@ -199,7 +243,6 @@ class ProcessedDataset(InMemoryDataset):
         test_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'test_loaders'))
         print("", flush=True)
-        print("", flush=True)
         print(f"generating batches for test set", flush=True)
         for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
             test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
@@ -217,11 +260,37 @@ class ProcessedDataset(InMemoryDataset):
             with open(os.path.join(self.processed_dir, 'test_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
 
+                
+        ## split random pair set according to the given batch size
+        N = random_pairs.shape[0]//self.batch_size
+        # seed random state from time
+        random_state2 = np.random.RandomState(int(time.time()))
+        # Sets up 10-fold cross validation set
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)    
+        random_batch = list()
+        os.mkdir(os.path.join(self.processed_dir, 'random_loaders'))
+        print("", flush=True)
+        print(f"generating batches for random pair set", flush=True)
+        for _, index in cv2.split(np.array(list(random_pairs.index)), np.array(random_pairs['y'])):
+            random_batch += [random_pairs.loc[list(index),:].reset_index(drop=True)]
+        for i in trange(len(random_batch)):
 
-        train_val_test = [train_batch, val_batch, test_batch]
+            batch_data = random_batch[i]
+            data_set = set()
+            data_set.update(set(batch_data.source))
+            data_set.update(set(batch_data.target))
+            data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+            for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
+                adjs = [(adj.edge_index,adj.size) for adj in adjs]
+                loader = (n_id, adjs)
+            filename = 'random_loader' + '_' + str(i) + '.pkl'
+            with open(os.path.join(self.processed_dir, 'random_loaders', filename), 'wb') as output:
+                pickle.dump(loader, output)
+
+        train_val_test_random = [train_batch, val_batch, test_batch, random_batch]
         
-        with open(os.path.join(self.processed_dir, 'train_val_test.pkl'), 'wb') as output:
-            pickle.dump(train_val_test, output)
+        with open(os.path.join(self.processed_dir, 'train_val_test_random.pkl'), 'wb') as output:
+            pickle.dump(train_val_test_random, output)
 
         with open(os.path.join(self.processed_dir, 'map_files.pkl'), 'wb') as output:
             pickle.dump(map_files, output)
@@ -232,9 +301,9 @@ class ProcessedDataset(InMemoryDataset):
         data = torch.load(os.path.join(self.processed_dir, 'processed_kg.dataset'))
         return data
     
-    def get_train_val_test(self):
-        train_val_test = pickle.load(open(os.path.join(self.processed_dir, 'train_val_test.pkl'), 'rb'))
-        return train_val_test
+    def get_train_val_test_random(self):
+        train_val_test_random = pickle.load(open(os.path.join(self.processed_dir, 'train_val_test_random.pkl'), 'rb'))
+        return train_val_test_random
     
     def get_mapfiles(self):
         mapfiles = pickle.load(open(os.path.join(self.processed_dir, 'map_files.pkl'), 'rb'))
@@ -252,9 +321,14 @@ class ProcessedDataset(InMemoryDataset):
         test_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'test_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
         return DataLoader(DataWrapper(test_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
 
+    def get_random_loader(self):
+        random_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'random_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
+        return DataLoader(DataWrapper(random_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
+
+
 
 class MakeKFoldData(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
+    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100, known_int_emb_dict=None, N=500):
 #         if known_int_emb_dict is not None:
 #             if not all([len(known_int_emb_dict[key])==dim for key, value in known_int_emb_dict.items()]):
 #                 raise AssertionError(f"At least one known inital embedding is not eqaul to the dimension of intial embedding you set which is {dim}")
@@ -263,9 +337,11 @@ class MakeKFoldData(InMemoryDataset):
         self.batch_size = batch_size
         self.tp_pairs = tp_pairs
         self.tn_pairs = tn_pairs
+        self.all_known_tp_pairs = all_known_tp_pairs
         self.dim = dim
         self.known_int_emb_dict = known_int_emb_dict
         self.K = K
+        self.N = N
         self.worker = 4 #multiprocessing.cpu_count()
         self.layer_size = []
         for _ in range(layers):
@@ -308,6 +384,40 @@ class MakeKFoldData(InMemoryDataset):
             init_emb = torch.normal(0, 1, size=(len(curie_ids), dim), dtype=torch.float32)
             init_embs[label] = (init_emb, curie_ids)
         return init_embs
+
+    
+    @staticmethod
+    def _rand_rate(n, test_pairs, disease_list, idx_map, all_known_tp_pairs):
+
+        random.seed(int(time.time()/100))
+        idtoname = {value:key for key, value in idx_map.items()}
+        ## only use the tp data
+        test_pairs = test_pairs.loc[test_pairs['y'] == 1,:].reset_index(drop=True)
+        drug_in_test_data = list(set(test_pairs['source']))
+        disease_name_list = list(map(idtoname.get, disease_list))
+        
+        ## create a check list for all tp an tn pairs
+        check_list_temp = {(all_known_tp_pairs.loc[index,'source'],all_known_tp_pairs.loc[index,'target']):1 for index in range(all_known_tp_pairs.shape[0])}
+        
+        random_pairs = []
+        for drug in drug_in_test_data:
+            count = 0
+            temp_dict = dict()
+            random.shuffle(disease_name_list)
+            for disease in disease_name_list:
+                if (drug, disease) not in check_list_temp and (drug, disease) not in temp_dict:
+                    temp_dict[(drug, disease)] = 1
+                    count += 1
+                if count == n:
+                    break
+            random_pairs += [pd.DataFrame(temp_dict.keys())]
+        
+        random_pairs = pd.concat(random_pairs).reset_index(drop=True).rename(columns={0:'source',1:'target'})
+        random_pairs['y'] = 1
+        
+        print(f'Number of random pairs: {random_pairs.shape[0]}', flush=True)
+
+        return random_pairs
     
     def process(self):
         all_nodes = set()
@@ -337,8 +447,13 @@ class MakeKFoldData(InMemoryDataset):
             val_pairs = all_pairs.loc[list(val_index),:].reset_index(drop=True)
             test_pairs = all_pairs.loc[list(test_index),:].reset_index(drop=True)
               
+#             ### generate random pairs for MRR or Hit@K evaluation
+#             print("", flush=True)
+#             print(f"generate random pairs for MRR or Hit@K evaluation", flush=True)
+#             disease_list = list(set([node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Disease' or node_type=='biolink:PhenotypicFeature' or node_type=='biolink:DiseaseOrPhenotypicFeature']))
+#             random_pairs = self._rand_rate(self.N, test_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+                
             os.mkdir(os.path.join(self.processed_dir, f"fold{fold+1}"))
-            print("", flush=True)
             print("", flush=True)
             print(f"generating batches for fold{fold+1} data set", flush=True)
             N = train_pairs.shape[0]//self.batch_size
@@ -351,7 +466,6 @@ class MakeKFoldData(InMemoryDataset):
             os.mkdir(os.path.join(self.processed_dir, f"fold{fold+1}", 'train_loaders'))
             for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
                 train_batch += [train_pairs.loc[list(index),:].reset_index(drop=True)]
-            print("", flush=True)
             print("", flush=True)
             print(f"generating batches for train set", flush=True)
             for i in trange(len(train_batch)):
@@ -378,7 +492,6 @@ class MakeKFoldData(InMemoryDataset):
             for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
                 val_batch += [val_pairs.loc[list(index),:].reset_index(drop=True)]
             print("", flush=True)
-            print("", flush=True)
             print(f"generating batches for validation set", flush=True)
             for i in trange(len(val_batch)):
 
@@ -404,7 +517,6 @@ class MakeKFoldData(InMemoryDataset):
             for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
                 test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
             print("", flush=True)
-            print("", flush=True)
             print(f"generating batches for test set", flush=True)
             for i in trange(len(test_batch)):
 
@@ -420,7 +532,34 @@ class MakeKFoldData(InMemoryDataset):
                 with open(os.path.join(self.processed_dir, f"fold{fold+1}", 'test_loaders', filename), 'wb') as output:
                     pickle.dump(loader, output)
 
+#             N = random_pairs.shape[0]//self.batch_size
+#             # seed random state from time
+#             random_state2 = np.random.RandomState(int(time.time()))
+#             # Sets up 10-fold cross validation set
+#             cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)   
+
+#             random_batch = list()
+#             os.mkdir(os.path.join(self.processed_dir, f"fold{fold+1}", 'random_loaders'))
+#             print("", flush=True)
+#             print(f"generating batches for random pair set", flush=True)
+#             for _, index in cv2.split(np.array(list(random_pairs.index)), np.array(random_pairs['y'])):
+#                 random_batch += [random_pairs.loc[list(index),:].reset_index(drop=True)]
+#             for i in trange(len(random_batch)):
+
+#                 batch_data = random_batch[i]
+#                 data_set = set()
+#                 data_set.update(set(batch_data.source))
+#                 data_set.update(set(batch_data.target))
+#                 data_idx=torch.tensor(list(map(idx_map.get, data_set)), dtype=torch.int32)
+#                 for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
+#                     adjs = [(adj.edge_index,adj.size) for adj in adjs]
+#                     loader = (n_id, adjs)
+#                 filename = 'random_loader' + '_' + str(i) + '.pkl'
+#                 with open(os.path.join(self.processed_dir, f"fold{fold+1}", 'random_loaders', filename), 'wb') as output:
+#                     pickle.dump(loader, output)
+                    
             train_val_test = [train_batch, val_batch, test_batch]
+#             train_val_test_random = [train_batch, val_batch, test_batch, random_batch]
 
             with open(os.path.join(self.processed_dir, f"fold{fold+1}", 'train_val_test.pkl'), 'wb') as output:
                 pickle.dump(train_val_test, output)
@@ -455,7 +594,11 @@ class MakeKFoldData(InMemoryDataset):
         test_loaders_path = sorted(glob(os.path.join(self.processed_dir, f"fold{fold}", 'test_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
         return DataLoader(DataWrapper(test_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
     
-
+#     def get_random_loader(self, fold):
+#         random_loaders_path = sorted(glob(os.path.join(self.processed_dir, f"fold{fold}", 'random_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
+#         return DataLoader(DataWrapper(random_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
+    
+    
 class MakeKRandomPairs(InMemoryDataset):
     def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, N=10000, transform=None, pre_transform=None, batch_size=512, layers=3, dim=100, known_int_emb_dict=None):
 #         if known_int_emb_dict is not None:
@@ -541,7 +684,7 @@ class MakeKRandomPairs(InMemoryDataset):
             if count == n:
                 break
         random_pairs = pd.DataFrame(random_pairs).rename(columns={0:'source', 1:'target'})
-        random_pairs['y'] = 1
+        random_pairs['y'] = 0
         
         print(f'Number of random pairs: {random_pairs.shape[0]}', flush=True)
 
@@ -568,10 +711,10 @@ class MakeKRandomPairs(InMemoryDataset):
         self.tp_pairs['y'] = 1
         self.tn_pairs['y'] = 0
         all_pairs = pd.concat([self.tp_pairs,self.tn_pairs]).reset_index(drop=True)
-        train_index, test_index = train_test_split(np.array(list(all_pairs.index)), train_size=0.9, random_state=random_state1, shuffle=True, stratify=np.array(list(all_pairs['y'])))
+        train_index, val_index = train_test_split(np.array(list(all_pairs.index)), train_size=0.9, random_state=random_state1, shuffle=True, stratify=np.array(list(all_pairs['y'])))
         
         train_pairs = all_pairs.loc[list(train_index),:].reset_index(drop=True)
-        test_pairs = all_pairs.loc[list(test_index),:].reset_index(drop=True)
+        val_pairs = all_pairs.loc[list(val_index),:].reset_index(drop=True)
         
         
         N = train_pairs.shape[0]//self.batch_size
@@ -583,7 +726,6 @@ class MakeKRandomPairs(InMemoryDataset):
         os.mkdir(os.path.join(self.processed_dir, 'train_loaders'))
         for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
             train_batch += [train_pairs.loc[list(index),:].reset_index(drop=True)]
-        print("", flush=True)
         print("", flush=True)
         print(f"generating batches for train set", flush=True)
         for i in trange(len(train_batch)):
@@ -601,22 +743,21 @@ class MakeKRandomPairs(InMemoryDataset):
                 pickle.dump(loader, output)
         
         
-        N = test_pairs.shape[0]//self.batch_size
+        N = val_pairs.shape[0]//self.batch_size
         # seed random state from time
         random_state2 = np.random.RandomState(int(time.time()))
         cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)  
 
         
-        test_batch = list()
+        val_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'test_loaders'))
-        for _, index in cv2.split(np.array(list(test_pairs.index)), np.array(test_pairs['y'])):
-            test_batch += [test_pairs.loc[list(index),:].reset_index(drop=True)]
-        print("", flush=True)
+        for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
+            val_batch += [val_pairs.loc[list(index),:].reset_index(drop=True)]
         print("", flush=True)
         print(f"generating batches for test set", flush=True)
         for i in trange(len(test_batch)):
 
-            batch_data = test_batch[i]
+            batch_data = val_batch[i]
             data_set = set()
             data_set.update(set(batch_data.source))
             data_set.update(set(batch_data.target))
@@ -624,8 +765,8 @@ class MakeKRandomPairs(InMemoryDataset):
             for _, n_id, adjs in NeighborSampler(data.edge_index, node_idx=data_idx, sizes=self.layer_size, batch_size=len(data_idx), shuffle=False, num_workers=self.worker):
                 adjs = [(adj.edge_index,adj.size) for adj in adjs]
                 loader = (n_id, adjs)
-            filename = 'test_loader' + '_' + str(i) + '.pkl'
-            with open(os.path.join(self.processed_dir, 'test_loaders', filename), 'wb') as output:
+            filename = 'val_loader' + '_' + str(i) + '.pkl'
+            with open(os.path.join(self.processed_dir, 'val_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
 
 
@@ -636,9 +777,8 @@ class MakeKRandomPairs(InMemoryDataset):
 
         tp_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'tp_loaders'))
-        for _, index in cv2.split(np.array(list(self.tp_pairs.index)), [1]*self.tp_pairs.shape[0]):
+        for _, index in cv2.split(np.array(list(self.tp_pairs.index)), np.array(tp_pairs['y'])):
             tp_batch += [self.tp_pairs.loc[list(index),:].reset_index(drop=True)]
-        print("", flush=True)
         print("", flush=True)
         print(f"generating batches for true positive set", flush=True)
         for i in trange(len(tp_batch)):
@@ -662,9 +802,8 @@ class MakeKRandomPairs(InMemoryDataset):
 
         tn_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'tn_loaders'))
-        for _, index in cv2.split(np.array(list(self.tn_pairs.index)), [1]*self.tn_pairs.shape[0]):
+        for _, index in cv2.split(np.array(list(self.tn_pairs.index)), np.array(tn_pairs['y'])):
             tn_batch += [self.tn_pairs.loc[list(index),:].reset_index(drop=True)]
-        print("", flush=True)
         print("", flush=True)
         print(f"generating batches for true negative set", flush=True)
         for i in trange(len(tn_batch)):
@@ -684,10 +823,9 @@ class MakeKRandomPairs(InMemoryDataset):
                 
         # generate random pairs of drug and disease
         print("", flush=True)
-        print("", flush=True)
         print(f"generating random pairs of drugs and diseases", flush=True)
-        disease_list = [node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Disease' or node_type=='biolink:PhenotypicFeature' or node_type=='biolink:DiseaseOrPhenotypicFeature']
-        drug_list = [node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Drug' or node_type=='biolink:ChemicalSubstance']
+        disease_list = list(set([node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Disease' or node_type=='biolink:PhenotypicFeature' or node_type=='biolink:DiseaseOrPhenotypicFeature']))
+        drug_list = list(set([node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Drug' or node_type=='biolink:ChemicalSubstance' or node_type=='biolink:Metabolite']))
         random_pairs = self._rand_rate(self.N, drug_list, disease_list, idx_map, all_pairs)
         
         N = random_pairs.shape[0]//self.batch_size
@@ -697,9 +835,8 @@ class MakeKRandomPairs(InMemoryDataset):
 
         rp_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'rp_loaders'))
-        for _, index in cv2.split(np.array(list(random_pairs.index)), [1]*random_pairs.shape[0]):
+        for _, index in cv2.split(np.array(list(random_pairs.index)), np.array(random_pairs['y'])):
             rp_batch += [random_pairs.loc[list(index),:].reset_index(drop=True)]
-        print("", flush=True)
         print("", flush=True)
         print(f"generating batches for random pair set", flush=True)
         for i in trange(len(rp_batch)):
@@ -716,7 +853,7 @@ class MakeKRandomPairs(InMemoryDataset):
             with open(os.path.join(self.processed_dir, 'rp_loaders', filename), 'wb') as output:
                 pickle.dump(loader, output)
                 
-        batch_set = [train_batch, test_batch, tp_batch, tn_batch, rp_batch]
+        batch_set = [train_batch, val_batch, tp_batch, tn_batch, rp_batch]
         
         with open(os.path.join(self.processed_dir, 'batch_set.pkl'), 'wb') as output:
             pickle.dump(batch_set, output)
@@ -742,9 +879,9 @@ class MakeKRandomPairs(InMemoryDataset):
         train_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'train_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
         return DataLoader(DataWrapper(train_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
     
-    def get_test_loader(self):
-        test_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'test_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
-        return DataLoader(DataWrapper(test_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
+    def get_val_loader(self):
+        val_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'val_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
+        return DataLoader(DataWrapper(val_loaders_path), batch_size=1, shuffle=False, num_workers=self.worker)
     
     def get_tp_loader(self):
         tp_loaders_path = sorted(glob(os.path.join(self.processed_dir, 'tp_loaders', '*.pkl')), key=lambda item: int(item.split('_')[-1].split('.')[0]))
