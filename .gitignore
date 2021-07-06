@@ -1,6 +1,7 @@
+data_*
 main.sh
 nohup.out
-data/
+data*
 results/
 scripts/__pycache__
 scripts/.ipynb_checkpoints
