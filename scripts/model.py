@@ -12,6 +12,70 @@ from torch_geometric.utils import remove_self_loops, add_self_loops, softmax
 
 from torch_geometric.nn.inits import glorot, zeros
 
+class SAGEConv(MessagePassing):
+
+    def __init__(self, in_channels: Union[int, Tuple[int, int]],
+                 out_channels: int, normalize: bool = False,
+                 root_weight: bool = True, concat: bool = False,
+                 bias: bool = True, **kwargs): 
+        kwargs.setdefault('aggr', 'mean')
+        super(SAGEConv, self).__init__(**kwargs)
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.normalize = normalize
+        self.root_weight = root_weight
+        self.concat = concat
+
+        if isinstance(in_channels, int):
+            in_channels = (in_channels, in_channels)
+
+        self.lin_l = Linear(in_channels[0], out_channels, bias=bias)
+        if self.root_weight:
+            self.lin_r = Linear(in_channels[1], out_channels, bias=False)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.lin_l.reset_parameters()
+        if self.root_weight:
+            self.lin_r.reset_parameters()
+
+    def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
+                size: Size = None) -> Tensor:
+        """"""
+        if isinstance(x, Tensor):
+            x: OptPairTensor = (x, x)
+
+        # propagate_type: (x: OptPairTensor)
+        out = self.propagate(edge_index, x=x, size=size)
+        out = self.lin_l(out)
+
+        x_r = x[1]
+        if self.root_weight and x_r is not None:
+            if self.concat:
+                out = torch.cat([self.lin_r(x_r), out], dim=-1)
+            else:
+                out += self.lin_r(x_r)
+
+        if self.normalize:
+            out = F.normalize(out, p=2., dim=-1)
+
+        return out
+
+    def message(self, x_j: Tensor) -> Tensor:
+        return x_j
+
+    def message_and_aggregate(self, adj_t: SparseTensor,
+                              x: OptPairTensor) -> Tensor:
+        adj_t = adj_t.set_value(None, layout=None)
+        return matmul(adj_t, x[0], reduce=self.aggr)
+
+    def __repr__(self):
+        return '{}({}, {})'.format(self.__class__.__name__, self.in_channels,
+                                   self.out_channels)
+
+
 class GATConv(MessagePassing):
     _alpha: OptTensor
 
@@ -147,8 +211,104 @@ class GATConv(MessagePassing):
                                              self.in_channels,
                                              self.out_channels, self.heads)
 
+class SAGE(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers, dropout_p, use_gpu=True, concat=True, bias=True, use_multiple_gpu=False):
+        super(SAGE, self).__init__()
+
+        self.num_layers = num_layers
+        self.dropout_p = dropout_p
+        self.use_gpu = use_gpu
+        self.use_multiple_gpu = use_multiple_gpu
+        self.concat = concat
+
+        # self.transform_lins = torch.nn.ModuleList()
+        self.convs = torch.nn.ModuleList()
+        if self.use_gpu is True:
+            device = torch.device('cuda:0')
+            # for index in range(len(type_in_channels)):
+            #     self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels, bias=False).to(device))
+            self.transform_lin = torch.nn.Linear(in_channels,hidden_channels,bias=False).to(device)
+            for layer in range(num_layers):
+                if use_multiple_gpu is True:
+                    device = f"cuda:{layer % torch.cuda.device_count()}"
+                else:
+                    device = "cuda:0"
+                dim_mult = 2 if self.concat and (layer != 0) else 1
+                self.convs.append(SAGEConv(dim_mult * hidden_channels, hidden_channels, concat=True, bias=bias).to(device))
+            layer = layer + 1
+            if use_multiple_gpu is True:
+                device = f"cuda:{layer % torch.cuda.device_count()}"
+            else:
+                device = "cuda:0"
+            self.lin = torch.nn.Linear(hidden_channels*4,out_channels,bias=False).to(device)
+        else:
+            # for index in range(len(type_in_channels)):
+            #     self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False))
+            self.transform_lin = torch.nn.Linear(in_channels,hidden_channels,bias=False)
+            for _ in range(num_layers):
+                dim_mult = 2 if self.concat and (layer != 0) else 1
+                self.convs.append(SAGEConv(dim_mult * hidden_channels, hidden_channels, concat=True, bias=bias))
+            self.lin = torch.nn.Linear(hidden_channels*4,out_channels,bias=False)
+
+    def reset_parameters(self):
+        # for lin in self.transform_lins:
+        #     lin.reset_parameters()
+        self.transform_lin.reset_parameters()
+        for conv in self.convs:
+            conv.reset_parameters()
+        self.lin.reset_parameters()
+
+    # def forward(self, all_init_mats, adjs, link, n_id, all_sorted_indexes):
+    def forward(self, init_mat, adjs, link, n_id):
+
+
+        if self.use_gpu is True:
+
+            # x = torch.vstack([self.transform_lins[index](mat.to('cuda:0')) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
+            x = self.transform_lin(init_mat.to('cuda:0'))[n_id]
+            for i, (edge_index, size) in enumerate(adjs):
+                if self.use_multiple_gpu is True:
+                    device = f"cuda:{i % torch.cuda.device_count()}"
+                else:
+                    device = "cuda:0"
+                x = x.to(device)
+                x_target = x[:size[1]].to(device)
+                edge_index = edge_index.to(device)
+                x = self.convs[i]((x, x_target), edge_index)
+                x = F.elu(x)
+                x = F.dropout(x, p=self.dropout_p, training=self.training)
+            i = i + 1
+            if self.use_multiple_gpu is True:
+                device = f"cuda:{i % torch.cuda.device_count()}"
+            else:
+                device = "cuda:0"
+            if link.shape[0]==1:
+                x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]]].view(1,-1),x[[torch.where(n_id==i)[0][0] for i in link[:,1]]].view(1,-1)], dim=1)
+            else:
+                x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]],:],x[[torch.where(n_id==i)[0][0] for i in link[:,1]],:]], dim=1)
+            x = x.to(device)
+            x = self.lin(x).squeeze(1) 
+
+        else:
+            # x = torch.vstack([self.transform_lins[index](mat) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
+            x = self.transform_lin(init_mat)[n_id]
+            for i, (edge_index, size) in enumerate(adjs):
+                x_target = x[:size[1]]
+                x = self.convs[i]((x, x_target), edge_index)
+                x = F.elu(x)
+                x = F.dropout(x, p=self.dropout_p, training=self.training)
+
+            if link.shape[0]==1:
+                x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]]].view(1,-1),x[[torch.where(n_id==i)[0][0] for i in link[:,1]]].view(1,-1)], dim=1)
+            else:
+                x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]],:],x[[torch.where(n_id==i)[0][0] for i in link[:,1]],:]], dim=1)
+            x = self.lin(x).squeeze(1)   
+
+        return x
+
+
 class GAT(torch.nn.Module):
-    def __init__(self, type_in_channels, hidden_channels, out_channels, num_layers, dropout_p, num_head = 8, use_gpu=True, bias=True, use_multiple_gpu=False):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers, dropout_p, num_head = 8, use_gpu=True, bias=True, use_multiple_gpu=False):
         super(GAT, self).__init__()
 
         self.num_layers = num_layers
@@ -156,12 +316,13 @@ class GAT(torch.nn.Module):
         self.use_gpu = use_gpu
         self.use_multiple_gpu = use_multiple_gpu
 
-        self.transform_lins = torch.nn.ModuleList()
+        # self.transform_lins = torch.nn.ModuleList()
         self.convs = torch.nn.ModuleList()
         if self.use_gpu is True:
             device = torch.device('cuda:0')
-            for index in range(len(type_in_channels)):
-                self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False).to(device))
+            # for index in range(len(type_in_channels)):
+            #     self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False).to(device))
+            self.transform_lin = torch.nn.Linear(in_channels,hidden_channels,bias=False).to(device)
             for layer in range(num_layers):
                 if use_multiple_gpu is True:
                     device = f"cuda:{layer % torch.cuda.device_count()}"
@@ -173,27 +334,41 @@ class GAT(torch.nn.Module):
                 device = f"cuda:{layer % torch.cuda.device_count()}"
             else:
                 device = "cuda:0"
-            self.lin = torch.nn.Linear(hidden_channels*2,out_channels,bias=False).to(device)
+            self.lin1 = torch.nn.Linear(hidden_channels*2,hidden_channels,bias=False).to(device)
+            layer = layer + 1
+            if use_multiple_gpu is True:
+                device = f"cuda:{layer % torch.cuda.device_count()}"
+            else:
+                device = "cuda:0"
+            self.lin2 = torch.nn.Linear(hidden_channels,out_channels,bias=False).to(device)
         else:
-            for index in range(len(type_in_channels)):
-                self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False))
+            # for index in range(len(type_in_channels)):
+            #     self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False))
+            self.transform_lin = torch.nn.Linear(in_channels,hidden_channels,bias=False)
             for _ in range(num_layers):
                 self.convs.append(GATConv(hidden_channels, hidden_channels, heads=num_head, dropout=dropout_p, concat=False, bias=bias))
-            self.lin = torch.nn.Linear(hidden_channels*2,out_channels,bias=False)
+            self.lin1 = torch.nn.Linear(hidden_channels*2,hidden_channels,bias=False)
+            self.lin2 = torch.nn.Linear(hidden_channels,out_channels,bias=False)
 
     def reset_parameters(self):
+        # for lin in self.transform_lins:
+        #     lin.reset_parameters()
+        self.transform_lin.reset_parameters()
         for conv in self.convs:
             conv.reset_parameters()
-        self.lin.reset_parameters()
+        self.lin1.reset_parameters()
+        self.lin2.reset_parameters()
 
-    def forward(self, all_init_mats, adjs, link, n_id, all_sorted_indexes, return_attention=False):
+    # def forward(self, all_init_mats, adjs, link, n_id, all_sorted_indexes, return_attention=False):
+    def forward(self, init_mat, adjs, link, n_id, return_attention=False):
 
         if return_attention:
             self.attention_weights_list = []
 
         if self.use_gpu is True:
 
-            x = torch.vstack([self.transform_lins[index](mat.to('cuda:0')) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
+            # x = torch.vstack([self.transform_lins[index](mat.to('cuda:0')) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
+            x = self.transform_lin(init_mat.to('cuda:0'))[n_id]
             for i, (edge_index, size) in enumerate(adjs):
                 if self.use_multiple_gpu is True:
                     device = f"cuda:{i % torch.cuda.device_count()}"
@@ -221,10 +396,11 @@ class GAT(torch.nn.Module):
                 x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]],:],x[[torch.where(n_id==i)[0][0] for i in link[:,1]],:]], dim=1)
             x = x.to(device)
 #             x = torch.sigmoid(self.lin(x)).squeeze(1)
-            x = self.lin(x).squeeze(1) 
+            x = self.lin2(F.dropout(F.elu(self.lin1(x)), p=self.dropout_p, training=self.training)).squeeze(1) 
 
         else:
-            x = torch.vstack([self.transform_lins[index](mat) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
+            # x = torch.vstack([self.transform_lins[index](mat) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
+            x = self.transform_lin(init_mat)[n_id]
             for i, (edge_index, size) in enumerate(adjs):
                 x_target = x[:size[1]]
                 if return_attention:
@@ -241,6 +417,6 @@ class GAT(torch.nn.Module):
             else:
                 x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]],:],x[[torch.where(n_id==i)[0][0] for i in link[:,1]],:]], dim=1)
 #             x = torch.sigmoid(self.lin(x)).squeeze(1)
-            x = self.lin(x).squeeze(1)   
+            x = self.lin2(F.dropout(F.elu(self.lin1(x)), p=self.dropout_p, training=self.training)).squeeze(1) 
 
         return x
