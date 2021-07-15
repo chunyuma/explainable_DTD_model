@@ -16,7 +16,7 @@ import time
 import random
 
 class ProcessedDataset(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100, known_int_emb_dict=None, N=500):
+    def __init__(self, root, run_model, raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100, known_int_emb_dict=None, N=500, num_samples=None):
         if not sum(train_val_test_size)==1:
             raise AssertionError("The sum of percents in train_val_test_size should be 1")
 #         if known_int_emb_dict is not None:
@@ -33,10 +33,15 @@ class ProcessedDataset(InMemoryDataset):
         self.train_val_test_size = train_val_test_size
         self.N = N
         self.worker = 4 #multiprocessing.cpu_count()
-        # self.layer_size = [-1, 10000, 1000, 100]
+
         self.layer_size = [1000, 1000, 1000, 1000]
-        # for _ in range(layers):
-            # self.layer_size += [-1]
+
+        self.layer_size = []
+        if run_model == 'gat' and num_samples is None:
+            for _ in range(layers):
+                self.layer_size += [-1]
+        else:
+            self.layer_size = num_samples
 
         super(ProcessedDataset, self).__init__(root, transform, pre_transform)
 
@@ -77,12 +82,12 @@ class ProcessedDataset(InMemoryDataset):
             
             print(f"Number of categories that are not uninitialized with known embeddings: {len(ulabels)}")
 
-
         for label in ulabels:
             curie_ids = node_info.loc[node_info.category.isin([label]),'id']
             curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
             init_emb = torch.normal(0, 1, size=(len(curie_ids), dim), dtype=torch.float32)
             init_embs[label] = (init_emb, curie_ids)
+
         return init_embs
     
     @staticmethod
@@ -329,7 +334,7 @@ class ProcessedDataset(InMemoryDataset):
 
 
 class MakeKFoldData(InMemoryDataset):
-    def __init__(self, root, raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100, known_int_emb_dict=None, N=500):
+    def __init__(self, root, run_model, raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs, transform=None, pre_transform=None, K=10, batch_size=512, layers=3, dim=100, known_int_emb_dict=None, N=500, num_samples=None):
 #         if known_int_emb_dict is not None:
 #             if not all([len(known_int_emb_dict[key])==dim for key, value in known_int_emb_dict.items()]):
 #                 raise AssertionError(f"At least one known inital embedding is not eqaul to the dimension of intial embedding you set which is {dim}")
@@ -345,9 +350,12 @@ class MakeKFoldData(InMemoryDataset):
         self.N = N
         self.worker = 4 #multiprocessing.cpu_count()
         self.layer_size = []
-        for _ in range(layers):
-            self.layer_size += [-1]
-            
+        if run_model == 'gat':
+            for _ in range(layers):
+                self.layer_size += [-1]
+        else:
+            self.layer_size = num_samples
+
         super(MakeKFoldData, self).__init__(root, transform, pre_transform)
             
     @property
@@ -378,12 +386,13 @@ class MakeKFoldData(InMemoryDataset):
                 init_emb = torch.tensor(np.vstack(list(known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'array'])), dtype=torch.float32)
                 init_embs[category] = (init_emb, curie_ids)
                 ulabels.remove(category)
-                
+
         for label in ulabels:
             curie_ids = node_info.loc[node_info.category.isin([label]),'id']
             curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
             init_emb = torch.normal(0, 1, size=(len(curie_ids), dim), dtype=torch.float32)
             init_embs[label] = (init_emb, curie_ids)
+
         return init_embs
 
     
@@ -648,12 +657,13 @@ class MakeKRandomPairs(InMemoryDataset):
                 init_emb = torch.tensor(np.vstack(list(known_int_emb_df.loc[known_int_emb_df.category.isin([category]),'array'])), dtype=torch.float32)
                 init_embs[category] = (init_emb, curie_ids)
                 ulabels.remove(category)
-                
+
         for label in ulabels:
             curie_ids = node_info.loc[node_info.category.isin([label]),'id']
             curie_ids = torch.tensor(list(map(idx_map.get, curie_ids)))
             init_emb = torch.normal(0, 1, size=(len(curie_ids), dim), dtype=torch.float32)
             init_embs[label] = (init_emb, curie_ids)
+
         return init_embs
     
     @staticmethod
