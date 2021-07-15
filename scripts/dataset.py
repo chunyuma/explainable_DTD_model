@@ -33,9 +33,10 @@ class ProcessedDataset(InMemoryDataset):
         self.train_val_test_size = train_val_test_size
         self.N = N
         self.worker = 4 #multiprocessing.cpu_count()
-        self.layer_size = []
-        for _ in range(layers):
-            self.layer_size += [-1]
+        # self.layer_size = [-1, 10000, 1000, 100]
+        self.layer_size = [1000, 1000, 1000, 1000]
+        # for _ in range(layers):
+            # self.layer_size += [-1]
 
         super(ProcessedDataset, self).__init__(root, transform, pre_transform)
 

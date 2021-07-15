@@ -2,7 +2,7 @@ data_*
 main.sh
 nohup.out
 data*
-results/
+result*
 __pycache*
 *.pyc
 scripts/__pycache__

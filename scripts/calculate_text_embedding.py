@@ -37,7 +37,8 @@ def load_data(args):
             category = item[1]
             name = item[2]
             des = item[3].rstrip("\n") if item[3] != "\n" else " "
-            text = category + " " + n_id + " " + name + " " + des
+            # text = category + " " + n_id + " " + name + " " + des
+            text = name + " " + category 
             
             texts.append(text)
             id2index[n_id] = index
