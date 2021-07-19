@@ -55,3 +55,5 @@ work_folder=$(pwd)
 # Train RF model
 echo 'running step3: train RF model'
 /usr/bin/time -v python ${work_folder}/scripts/run_RF_model.py --data_path ${work_folder}/data --run_mode 1 --depth 29 --trees 2000 --m_suffix 'with_text_embedding' --pair_emb 'concatenate' --output_folder ${work_folder}/results/
+python scripts/run_RF_model.py --data_path /root/data --run_mode 1 --depth 29 --trees 2000 --m_suffix 'with_text_embedding' --pair_emb 'concatenate' --output_folder results/
+python scripts/run_logistic_model.py --data_path /root/data --run_mode 1 --pair_emb 'concatenate' --output_folder results/

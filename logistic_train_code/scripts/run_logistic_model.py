@@ -13,6 +13,12 @@ import joblib
 from glob import glob
 from utils import calculate_acc, plot_cutoff, calculate_f1score, calculate_mrr, calculate_hitk
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from torch.optim.lr_scheduler import StepLR
 
 def generate_X_and_y(data_df, curie_to_vec_dict, pair_emb='concatenate'):
     
@@ -30,9 +36,26 @@ def generate_X_and_y(data_df, curie_to_vec_dict, pair_emb='concatenate'):
     return [X, y]
 
 
-def evaluate(model, X, y_true, calculate_metric=True): 
+def evaluate(model, X=None, y_true=None, loader=None, num_sample=0, calculate_metric=True): 
 
-    probas = model.predict_proba(X)[:,1]
+    if loader:
+        model.eval()
+        probas = np.zeros([num_sample])
+        y_true = np.zeros([num_sample])
+        with torch.no_grad():
+            last_end = 0
+            for X, y in loader:
+                l = len(y)
+                X, y = X.to(device), y.to(device)
+                output = model(X)[:,1]
+                probas[last_end:last_end+l] = output.cpu().numpy()
+                y_true[last_end:last_end+l] = y.cpu().numpy()
+                last_end += l
+
+        # probas = probas[1:]
+        # y_true = y_true[1:]
+    else:
+        probas = model.predict_proba(X)[:,1]
     
     if calculate_metric is True:
         
@@ -64,11 +87,73 @@ def evaluate(model, X, y_true, calculate_metric=True):
         
         return [None, None, None, None, None, y_true, probas]
 
+
+class NodeDataset(Dataset):
+    def __init__(self, vecs, labels):
+        self.vecs = vecs
+        self.labels = labels
+    
+    def __len__(self):
+        return len(self.labels)
+    
+    def __getitem__(self, index):
+        return self.vecs[index], self.labels[index]
+
+
+class Net(nn.Module):
+    def __init__(self, hidden_size, dropout):
+        super(Net, self).__init__()
+        self.fc1 = nn.Linear(1024, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, 2)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
+        self.bn1 = nn.BatchNorm1d(1024)
+        self.bn2 = nn.BatchNorm1d(hidden_size)
+        self.bn3 = nn.BatchNorm1d(hidden_size)
+
+    
+    def forward(self, x):
+        x = x.float()
+        x = self.bn1(x)
+        x = self.dropout1(x)
+        x = self.fc1(x)
+        x = self.bn2(x)
+        x = F.relu(x)
+        x = self.dropout2(x)
+        x = self.fc2(x)
+        x = self.bn3(x)
+        x = F.relu(x)
+        x = self.dropout3(x)
+        x = self.fc3(x)
+        output = x
+        # output = F.softmax(x, dim=1)
+        return output
+
+
+def train(model, device, train_loader, optimizer, epoch, log_step):
+    model.train()
+    for batch_idx, (sequence, label) in enumerate(train_loader):
+        sequence, label = sequence.to("cuda"), label.to("cuda")
+        optimizer.zero_grad()
+        output = model(sequence)
+        loss_fn = nn.CrossEntropyLoss()
+        loss = loss_fn(output, label.long())
+        loss.backward()
+        optimizer.step()
+        if batch_idx % log_step == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(sequence), len(train_loader.dataset),
+                100. * batch_idx / len(train_loader), loss.item()))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Main script for running model", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--run_mode", type=int, help="Model for running model. 1 for normal mode, 2 for crossvalidation", default=1)
     parser.add_argument("--data_path", type=str, help="Data Forlder", default='~/work/GraphSage_logistic_model/data')
     parser.add_argument("--m_suffix", type=str, help="Model Name Suffix", default='default')
+    parser.add_argument("--neural_net", action="store_true", help="Whether to use neural network or not")
     parser.add_argument("--pair_emb", type=str, help="The method for the pair embedding (concatenate or hadamard).", default="concatenate")
     parser.add_argument("--output_folder", type=str, help="The path of output folder", default="~/work/GraphSage_logistic_model/results")
     args = parser.parse_args()
@@ -107,22 +192,62 @@ if __name__ == "__main__":
         except:
             pass
         
-        # Sets and fits Random ForestModel
-        print('Start training model', flush=True)
-        logistic_model = LogisticRegression(class_weight='balanced', penalty='none', solver='saga')
-        fitModel = logistic_model.fit(train_X, train_y)
+        if args.neural_net:
+            # prepare for neural network
+            lr = 0.0005
+            batch_size = 32
+            num_epoch = 30
+            hidden_size = 4096
+            dropout = 0.1
+            log_step = 100
+            device = torch.device('cuda')
 
-        # saves the model
-        model_name = f'logistic_{args.m_suffix}.pt'
-        joblib.dump(fitModel, os.path.join(args.output_folder, folder_name, model_name))
+            print('Process data for neural network model', flush=True)
+            train_dataset = NodeDataset(vecs=train_X, labels=train_y)
+            val_dataset = NodeDataset(vecs=val_X, labels=val_y)
+            test_dataset = NodeDataset(vecs=test_X, labels=test_y)
+            random_dataset = NodeDataset(vecs=random_X, labels=random_y)
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+            test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+            random_loader = DataLoader(random_dataset, batch_size=batch_size, shuffle=False)
 
-        print("")
-        print('#### Evaluate best model ####', flush=True)
-        train_acc, train_f1score, train_auc_score, train_ap_score, train_plot_data, train_y_true, train_y_probs = evaluate(fitModel, train_X, train_y)
-        val_acc, val_f1score, val_auc_score, val_ap_score, val_plot_data, val_y_true, val_y_probs = evaluate(fitModel, val_X, val_y)
-        test_acc, test_f1score, test_auc_score, test_ap_score, test_plot_data, test_y_true, test_y_probs = evaluate(fitModel, test_X, test_y)
+            print('Start training neural network model', flush=True)
+            fitModel = Net(hidden_size=hidden_size, dropout=dropout).to(device)
+            optimizer = optim.AdamW(fitModel.parameters(), lr=lr)
+            for epoch in range(1, num_epoch + 1):
+                print('Start epoch: {}'.format(epoch), flush=True)
+                train(fitModel, device, train_loader, optimizer, epoch, log_step)
+            
+            print("")
+            print('#### Evaluate best model ####', flush=True)
+            train_acc, train_f1score, train_auc_score, train_ap_score, train_plot_data, train_y_true, train_y_probs = evaluate(fitModel, loader=train_loader, num_sample=len(train_dataset))
+            val_acc, val_f1score, val_auc_score, val_ap_score, val_plot_data, val_y_true, val_y_probs = evaluate(fitModel, loader=val_loader, num_sample=len(val_dataset))
+            test_acc, test_f1score, test_auc_score, test_ap_score, test_plot_data, test_y_true, test_y_probs = evaluate(fitModel, loader=test_loader, num_sample=len(test_dataset))
+            _, _, _, _, _, random_y_true, random_y_probs = evaluate(fitModel, loader=random_loader, calculate_metric=False, num_sample=len(random_dataset))
+            
+
+
+
+
+        else:
+            # Sets and fits Random ForestModel
+            print('Start training model', flush=True)
+            logistic_model = LogisticRegression(class_weight='balanced', penalty='elasticnet', solver='saga', l1_ratio=0.5)
+            fitModel = logistic_model.fit(train_X, train_y)
+
+            # saves the model
+            model_name = f'logistic_{args.m_suffix}.pt'
+            joblib.dump(fitModel, os.path.join(args.output_folder, folder_name, model_name))
+
+            print("")
+            print('#### Evaluate best model ####', flush=True)
+            train_acc, train_f1score, train_auc_score, train_ap_score, train_plot_data, train_y_true, train_y_probs = evaluate(fitModel, train_X, train_y)
+            val_acc, val_f1score, val_auc_score, val_ap_score, val_plot_data, val_y_true, val_y_probs = evaluate(fitModel, val_X, val_y)
+            test_acc, test_f1score, test_auc_score, test_ap_score, test_plot_data, test_y_true, test_y_probs = evaluate(fitModel, test_X, test_y)
+            _, _, _, _, _, random_y_true, random_y_probs = evaluate(fitModel, random_X, random_y, calculate_metric=False)
+        
         test_data['prob'] = test_y_probs
-        _, _, _, _, _, random_y_true, random_y_probs = evaluate(fitModel, random_X, random_y, False)
         random_data['prob'] = random_y_probs
         
         test_mrr_score = calculate_mrr(test_data,random_data)

@@ -91,6 +91,7 @@ if __name__ == "__main__":
     
     if args.run_mode == 1:
         ## read train set, validation set and test set (ignore the validation set)
+        print('Start processing data', flush=True)
         with open(args.data_path + '/mode1/train_val_test_random.pkl', 'rb') as infile:
             train_batch, val_batch, test_batch, random_batch = pickle.load(infile)
             train_data = pd.concat(train_batch).reset_index(drop=True)
