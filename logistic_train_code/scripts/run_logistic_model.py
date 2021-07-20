@@ -1,5 +1,6 @@
 import sys
 import os
+import random
 import pickle
 import pandas as pd
 import numpy as np
@@ -18,7 +19,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import ExponentialLR
+
+
+# 112,146,54,135
 
 def generate_X_and_y(data_df, curie_to_vec_dict, pair_emb='concatenate'):
     
@@ -47,7 +51,8 @@ def evaluate(model, X=None, y_true=None, loader=None, num_sample=0, calculate_me
             for X, y in loader:
                 l = len(y)
                 X, y = X.to(device), y.to(device)
-                output = model(X)[:,1]
+                # output = model(X)[:,1]
+                output = model(X)[:,0]
                 probas[last_end:last_end+l] = output.cpu().numpy()
                 y_true[last_end:last_end+l] = y.cpu().numpy()
                 last_end += l
@@ -88,6 +93,14 @@ def evaluate(model, X=None, y_true=None, loader=None, num_sample=0, calculate_me
         return [None, None, None, None, None, y_true, probas]
 
 
+def set_seed(seed=24):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 class NodeDataset(Dataset):
     def __init__(self, vecs, labels):
         self.vecs = vecs
@@ -105,7 +118,8 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.fc1 = nn.Linear(1024, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, 2)
+        # self.fc3 = nn.Linear(hidden_size, 2)
+        self.fc3 = nn.Linear(hidden_size, 1)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
@@ -128,24 +142,26 @@ class Net(nn.Module):
         x = self.dropout3(x)
         x = self.fc3(x)
         output = x
-        # output = F.softmax(x, dim=1)
         return output
 
 
-def train(model, device, train_loader, optimizer, epoch, log_step):
+def train(model, device, train_loader, optimizer, scheduler, epoch, log_step):
     model.train()
     for batch_idx, (sequence, label) in enumerate(train_loader):
         sequence, label = sequence.to("cuda"), label.to("cuda")
         optimizer.zero_grad()
         output = model(sequence)
-        loss_fn = nn.CrossEntropyLoss()
-        loss = loss_fn(output, label.long())
+        # loss_fn = nn.CrossEntropyLoss()
+        # loss = loss_fn(output, label.long())
+        loss_fn = nn.MSELoss()
+        loss = loss_fn(output, label.unsqueeze(1).float())
         loss.backward()
         optimizer.step()
         if batch_idx % log_step == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(sequence), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.item()))
+    scheduler.step()
 
 
 if __name__ == "__main__":
@@ -196,11 +212,15 @@ if __name__ == "__main__":
             # prepare for neural network
             lr = 0.0005
             batch_size = 32
-            num_epoch = 30
+            num_epoch = 100
             hidden_size = 4096
-            dropout = 0.1
+            dropout = 0.0
             log_step = 100
             device = torch.device('cuda')
+            gamma = 0.95
+            seed = 24
+
+            set_seed(seed)
 
             print('Process data for neural network model', flush=True)
             train_dataset = NodeDataset(vecs=train_X, labels=train_y)
@@ -215,9 +235,10 @@ if __name__ == "__main__":
             print('Start training neural network model', flush=True)
             fitModel = Net(hidden_size=hidden_size, dropout=dropout).to(device)
             optimizer = optim.AdamW(fitModel.parameters(), lr=lr)
+            scheduler = ExponentialLR(optimizer, gamma=gamma)
             for epoch in range(1, num_epoch + 1):
                 print('Start epoch: {}'.format(epoch), flush=True)
-                train(fitModel, device, train_loader, optimizer, epoch, log_step)
+                train(fitModel, device, train_loader, optimizer, scheduler, epoch, log_step)
             
             print("")
             print('#### Evaluate best model ####', flush=True)
