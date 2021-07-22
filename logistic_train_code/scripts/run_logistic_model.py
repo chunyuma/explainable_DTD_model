@@ -22,7 +22,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import ExponentialLR
 
 
-# 112,146,54,135
+# 119,155,54,144,207
 
 def generate_X_and_y(data_df, curie_to_vec_dict, pair_emb='concatenate'):
     
@@ -51,14 +51,12 @@ def evaluate(model, X=None, y_true=None, loader=None, num_sample=0, calculate_me
             for X, y in loader:
                 l = len(y)
                 X, y = X.to(device), y.to(device)
-                # output = model(X)[:,1]
-                output = model(X)[:,0]
+                output = model(X)[:,1]
+                # output = model(X)[:,0]
                 probas[last_end:last_end+l] = output.cpu().numpy()
                 y_true[last_end:last_end+l] = y.cpu().numpy()
                 last_end += l
 
-        # probas = probas[1:]
-        # y_true = y_true[1:]
     else:
         probas = model.predict_proba(X)[:,1]
     
@@ -119,13 +117,15 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(1024, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         # self.fc3 = nn.Linear(hidden_size, 2)
-        self.fc3 = nn.Linear(hidden_size, 1)
+        # self.fc3 = nn.Linear(hidden_size, 1)
+        self.fc3 = nn.Linear(hidden_size, 3)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
         self.bn1 = nn.BatchNorm1d(1024)
         self.bn2 = nn.BatchNorm1d(hidden_size)
         self.bn3 = nn.BatchNorm1d(hidden_size)
+        self.Sig = nn.Sigmoid()
 
     
     def forward(self, x):
@@ -142,6 +142,7 @@ class Net(nn.Module):
         x = self.dropout3(x)
         x = self.fc3(x)
         output = x
+        # output = self.Sig(x)
         return output
 
 
@@ -151,10 +152,10 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, log_step):
         sequence, label = sequence.to("cuda"), label.to("cuda")
         optimizer.zero_grad()
         output = model(sequence)
-        # loss_fn = nn.CrossEntropyLoss()
-        # loss = loss_fn(output, label.long())
-        loss_fn = nn.MSELoss()
-        loss = loss_fn(output, label.unsqueeze(1).float())
+        loss_fn = nn.CrossEntropyLoss()
+        loss = loss_fn(output, label.long())
+        # loss_fn = nn.MSELoss()
+        # loss = loss_fn(output, label.unsqueeze(1).float())
         loss.backward()
         optimizer.step()
         if batch_idx % log_step == 0:
@@ -202,6 +203,13 @@ if __name__ == "__main__":
         test_X, test_y = generate_X_and_y(test_data, curie_to_vec_dict, pair_emb='concatenate')
         random_X, random_y = generate_X_and_y(random_data, curie_to_vec_dict, pair_emb='concatenate')
 
+        num_shared = 20000
+        train_X = np.concatenate((train_X, random_X[:num_shared]))
+        train_y = np.concatenate((train_y, np.ones([num_shared])*2))
+        # random_X = random_X[num_shared:]
+        # random_y = random_y[num_shared:]
+
+
         folder_name = f'logistic_{args.m_suffix}'
         try:
             os.mkdir(os.path.join(args.output_folder, folder_name))
@@ -214,7 +222,7 @@ if __name__ == "__main__":
             batch_size = 32
             num_epoch = 100
             hidden_size = 4096
-            dropout = 0.0
+            dropout = 0.1
             log_step = 100
             device = torch.device('cuda')
             gamma = 0.95
@@ -239,10 +247,14 @@ if __name__ == "__main__":
             for epoch in range(1, num_epoch + 1):
                 print('Start epoch: {}'.format(epoch), flush=True)
                 train(fitModel, device, train_loader, optimizer, scheduler, epoch, log_step)
-            
+
+            ori_train_dataset = NodeDataset(vecs=train_X[:-num_shared], labels=train_y[:-num_shared])
+            ori_train_loader = DataLoader(ori_train_dataset, batch_size=batch_size, shuffle=True)
+
             print("")
             print('#### Evaluate best model ####', flush=True)
-            train_acc, train_f1score, train_auc_score, train_ap_score, train_plot_data, train_y_true, train_y_probs = evaluate(fitModel, loader=train_loader, num_sample=len(train_dataset))
+            # train_acc, train_f1score, train_auc_score, train_ap_score, train_plot_data, train_y_true, train_y_probs = evaluate(fitModel, loader=train_loader, num_sample=len(train_dataset))
+            train_acc, train_f1score, train_auc_score, train_ap_score, train_plot_data, train_y_true, train_y_probs = evaluate(fitModel, loader=ori_train_loader, num_sample=len(ori_train_dataset))
             val_acc, val_f1score, val_auc_score, val_ap_score, val_plot_data, val_y_true, val_y_probs = evaluate(fitModel, loader=val_loader, num_sample=len(val_dataset))
             test_acc, test_f1score, test_auc_score, test_ap_score, test_plot_data, test_y_true, test_y_probs = evaluate(fitModel, loader=test_loader, num_sample=len(test_dataset))
             _, _, _, _, _, random_y_true, random_y_probs = evaluate(fitModel, loader=random_loader, calculate_metric=False, num_sample=len(random_dataset))
