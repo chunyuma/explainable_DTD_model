@@ -117,7 +117,7 @@ class ProcessedDataset(InMemoryDataset):
         random.seed(int(time.time()/100))
         idtoname = {value:key for key, value in idx_map.items()}
         ## only use the tp data
-        test_pairs = test_pairs.loc[test_pairs['y'] == 1,:].reset_index(drop=True)
+        test_pairs = test_pairs.loc[test_pairs['y'] == 0,:].reset_index(drop=True)
         drug_in_test_data = list(set(test_pairs['source']))
         disease_name_list = list(map(idtoname.get, disease_list))
         
