@@ -10,6 +10,13 @@ import numpy as np
 from sklearn.metrics import f1_score
 plt.switch_backend('agg')
 
+def set_random_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
 def calculate_f1score(preds, labels, average='macro'):
     preds = np.array(preds)
     y_pred_tags = np.argmax(preds, axis=1) 

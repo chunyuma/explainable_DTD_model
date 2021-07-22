@@ -16,7 +16,7 @@ import time
 import random
 
 class ProcessedDataset(InMemoryDataset):
-    def __init__(self, root, run_model, raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100, known_int_emb_dict=None, N=500, num_samples=None):
+    def __init__(self, root, run_model, raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs, transform=None, pre_transform=None, train_val_test_size=[0.8, 0.1, 0.1], batch_size=512, layers=3, dim=100, known_int_emb_dict=None, train_N=30, non_train_N=500, num_samples=None, seed=1234):
         if not sum(train_val_test_size)==1:
             raise AssertionError("The sum of percents in train_val_test_size should be 1")
 #         if known_int_emb_dict is not None:
@@ -33,6 +33,7 @@ class ProcessedDataset(InMemoryDataset):
         self.train_val_test_size = train_val_test_size
         self.N = N
         self.worker = 4 #multiprocessing.cpu_count()
+        self.seed = seed
 
         self.layer_size = [1000, 1000, 1000, 1000]
 
@@ -114,7 +115,7 @@ class ProcessedDataset(InMemoryDataset):
     @staticmethod
     def _rand_rate(n, test_pairs, disease_list, idx_map, all_known_tp_pairs):
 
-        random.seed(int(time.time()/100))
+        random.seed(int(self.seed))
         idtoname = {value:key for key, value in idx_map.items()}
         ## only use the tp data
         test_pairs = test_pairs.loc[test_pairs['y'] == 0,:].reset_index(drop=True)
@@ -166,15 +167,15 @@ class ProcessedDataset(InMemoryDataset):
         ### generate train, validation and test pairs
         print("", flush=True)
         print(f"generate train, validation and test pairs", flush=True)
-        random_state1 = np.random.RandomState(int(time.time()))
+        random_state = np.random.RandomState(int(self.seed))
         self.tp_pairs['y'] = 0
         self.tn_pairs['y'] = 2
         all_pairs = pd.concat([self.tp_pairs,self.tn_pairs]).reset_index(drop=True)
-        train_index, val_test_index = train_test_split(np.array(list(all_pairs.index)), train_size=self.train_val_test_size[0], random_state=random_state1, shuffle=True, stratify=np.array(list(all_pairs['y'])))        
+        train_index, val_test_index = train_test_split(np.array(list(all_pairs.index)), train_size=self.train_val_test_size[0], random_state=random_state, shuffle=True, stratify=np.array(list(all_pairs['y'])))        
         train_pairs = all_pairs.loc[list(train_index),:].reset_index(drop=True)
         val_test_pairs = all_pairs.loc[list(val_test_index),:].reset_index(drop=True)
         
-        val_index, test_index = train_test_split(np.array(list(val_test_pairs.index)), train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]), random_state=random_state1, shuffle=True, stratify=np.array(list(val_test_pairs['y'])))
+        val_index, test_index = train_test_split(np.array(list(val_test_pairs.index)), train_size=self.train_val_test_size[1]/(self.train_val_test_size[1]+self.train_val_test_size[2]), random_state=random_state, shuffle=True, stratify=np.array(list(val_test_pairs['y'])))
         val_pairs = val_test_pairs.loc[list(val_index),:].reset_index(drop=True)
         test_pairs = val_test_pairs.loc[list(test_index),:].reset_index(drop=True)
         
@@ -183,17 +184,15 @@ class ProcessedDataset(InMemoryDataset):
         print("", flush=True)
         print(f"generate random pairs for MRR or Hit@K evaluation", flush=True)
         disease_list = list(set([node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Disease' or node_type=='biolink:PhenotypicFeature' or node_type=='biolink:DiseaseOrPhenotypicFeature']))
-        train_random_pairs = self._rand_rate(self.N, train_pairs, disease_list, idx_map, self.all_known_tp_pairs)
-        val_random_pairs = self._rand_rate(self.N, val_pairs, disease_list, idx_map, self.all_known_tp_pairs)
-        test_random_pairs = self._rand_rate(self.N, test_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        train_random_pairs = self._rand_rate(self.train_N, train_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        val_random_pairs = self._rand_rate(self.non_train_N, val_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        test_random_pairs = self._rand_rate(self.non_train_N, test_pairs, disease_list, idx_map, self.all_known_tp_pairs)
         
         ## split training set according to the given batch size
         train_pairs = pd.concat([train_pairs,train_random_pairs]).reset_index(drop=True)
         N = train_pairs.shape[0]//self.batch_size
-        # seed random state from time
-        random_state2 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
-        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state, shuffle=True)
         train_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'train_loaders'))
         for _, index in cv2.split(np.array(list(train_pairs.index)), np.array(train_pairs['y'])):
@@ -218,10 +217,8 @@ class ProcessedDataset(InMemoryDataset):
         ## split validation set according to the given batch size
         val_pairs = pd.concat([val_pairs,val_random_pairs]).reset_index(drop=True)
         N = val_pairs.shape[0]//self.batch_size
-        # seed random state from time
-        random_state2 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
-        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state, shuffle=True)
         val_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'val_loaders'))
         for _, index in cv2.split(np.array(list(val_pairs.index)), np.array(val_pairs['y'])):
@@ -246,10 +243,8 @@ class ProcessedDataset(InMemoryDataset):
         ## split test set according to the given batch size
         test_pairs = pd.concat([test_pairs,test_random_pairs]).reset_index(drop=True)
         N = test_pairs.shape[0]//self.batch_size
-        # seed random state from time
-        random_state2 = np.random.RandomState(int(time.time()))
         # Sets up 10-fold cross validation set
-        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state2, shuffle=True)    
+        cv2 = ms.StratifiedKFold(n_splits=N, random_state=random_state, shuffle=True)    
         test_batch = list()
         os.mkdir(os.path.join(self.processed_dir, 'test_loaders'))
         print("", flush=True)
