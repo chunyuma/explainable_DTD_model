@@ -117,7 +117,7 @@ class ProcessedDataset(InMemoryDataset):
         random.seed(int(time.time()/100))
         idtoname = {value:key for key, value in idx_map.items()}
         ## only use the tp data
-        test_pairs = test_pairs.loc[test_pairs['y'] == 1,:].reset_index(drop=True)
+        test_pairs = test_pairs.loc[test_pairs['y'] == 0,:].reset_index(drop=True)
         drug_in_test_data = list(set(test_pairs['source']))
         disease_name_list = list(map(idtoname.get, disease_list))
         
@@ -183,8 +183,8 @@ class ProcessedDataset(InMemoryDataset):
         print("", flush=True)
         print(f"generate random pairs for MRR or Hit@K evaluation", flush=True)
         disease_list = list(set([node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Disease' or node_type=='biolink:PhenotypicFeature' or node_type=='biolink:DiseaseOrPhenotypicFeature']))
-        train_random_pairs = self._rand_rate(self.N, train_pairs, disease_list, idx_map, self.all_known_tp_pairs)
-        val_random_pairs = self._rand_rate(self.N, val_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        train_random_pairs = self._rand_rate(20, train_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        val_random_pairs = self._rand_rate(20, val_pairs, disease_list, idx_map, self.all_known_tp_pairs)
         test_random_pairs = self._rand_rate(self.N, test_pairs, disease_list, idx_map, self.all_known_tp_pairs)
         
         ## split training set according to the given batch size

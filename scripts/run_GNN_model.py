@@ -4,7 +4,7 @@ import os
 import numpy as np
 from tqdm import tqdm, trange
 from torch.utils.tensorboard import SummaryWriter
-from dataset import ProcessedDataset, MakeKFoldData, MakeKRandomPairs
+from dataset import ProcessedDataset
 from model import GAT, SAGE
 import torch.nn.functional as F
 import pickle
@@ -113,7 +113,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
                 with amp.autocast(enabled=True): # use mixed precision training
                     pred_y= model(init_mat, adjs, link, n_id).to(device)
                     val_loss = criterion(pred_y, y)
-                    all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()]
+                    all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
                     all_y = torch.cat([all_y, y.cpu().detach()])
             else:
                 pred_y= model(init_mat, adjs, link, n_id).to(device)

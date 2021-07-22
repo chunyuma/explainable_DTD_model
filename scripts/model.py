@@ -321,7 +321,7 @@ class SAGE(torch.nn.Module):
             x = self.bn2(x)
             x = F.elu(x)
             x = F.dropout(x, p=self.dropout_p, training=self.training)
-            x = self.f3(x).squeeze(1)
+            x = self.fc3(x).squeeze(1)
 
         else:
             # x = torch.vstack([self.transform_lins[index](mat) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
@@ -348,7 +348,7 @@ class SAGE(torch.nn.Module):
             x = self.bn2(x)
             x = F.elu(x)
             x = F.dropout(x, p=self.dropout_p, training=self.training)
-            x = self.f3(x).squeeze(1) 
+            x = self.fc3(x).squeeze(1) 
 
         return x
 
@@ -468,7 +468,7 @@ class GAT(torch.nn.Module):
             x = self.bn2(x)
             x = F.elu(x)
             x = F.dropout(x, p=self.dropout_p, training=self.training)
-            x = self.f3(x).squeeze(1)
+            x = self.fc3(x).squeeze(1)
 
         else:
             # x = torch.vstack([self.transform_lins[index](mat) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
@@ -501,6 +501,6 @@ class GAT(torch.nn.Module):
             x = self.bn2(x)
             x = F.elu(x)
             x = F.dropout(x, p=self.dropout_p, training=self.training)
-            x = self.f3(x).squeeze(1)
+            x = self.fc3(x).squeeze(1)
 
         return x
