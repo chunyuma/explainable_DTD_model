@@ -50,7 +50,7 @@ class ProcessedDataset(InMemoryDataset):
         return []
     @property
     def processed_file_names(self):
-        return ['processed_kg.dataset', 'map_files.pkl', 'train_val_test_random.pkl']
+        return ['processed_kg.dataset', 'map_files.pkl', 'train_val_test.pkl']
 
     def download(self):
         pass
