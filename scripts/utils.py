@@ -10,29 +10,30 @@ import numpy as np
 from sklearn.metrics import f1_score
 plt.switch_backend('agg')
 
-def calculate_f1score(preds, labels, threshold=0.5):
+def calculate_f1score(preds, labels, average='macro'):
     preds = np.array(preds)
+    y_pred_tags = np.argmax(preds, axis=1) 
     labels = np.array(labels)
-    preds = (np.array(preds)>threshold).astype(int)
-    f1score = f1_score(labels, preds, average='binary')
+    f1score = f1_score(labels, y_pred_tags, average=average)
     return f1score
 
-def calculate_acc(preds, labels, threshold=0.5):
+def calculate_acc(preds, labels):
     preds = np.array(preds)
+    y_pred_tags = np.argmax(preds, axis=1) 
     labels = np.array(labels)
-    preds = (np.array(preds)>threshold).astype(int)
-    acc = (preds == labels).astype(float).mean()
+    acc = (y_pred_tags == labels).astype(float).mean()
     return acc
 
-def calculate_mrr(drug_disease_pairs, random_pairs):
+def calculate_mrr(drug_disease_pairs):
     '''
     This function is used to calculate Mean Reciprocal Rank (MRR)
     reference paper: Knowledge Graph Embedding for Link Prediction: A Comparative Analysis
     '''
     
     ## only use tp pairs
-    drug_disease_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
-    
+    drug_disease_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==0,:].reset_index(drop=True)
+    random_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
+
     Q_n = len(drug_disease_pairs)
     score = 0
     for index in range(Q_n):
@@ -47,15 +48,16 @@ def calculate_mrr(drug_disease_pairs, random_pairs):
     
     return final_score
 
-def calculate_hitk(drug_disease_pairs, random_pairs, k=1):
+def calculate_hitk(drug_disease_pairs, k=1):
     '''
     This function is used to calculate Hits@K (H@K)
     reference paper: Knowledge Graph Embedding for Link Prediction: A Comparative Analysis
     '''
     
     ## only use tp pairs
-    drug_disease_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
-    
+    drug_disease_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==0,:].reset_index(drop=True)
+    random_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
+
     Q_n = len(drug_disease_pairs)
     count = 0
     for index in range(Q_n):

@@ -228,6 +228,7 @@ class SAGE(torch.nn.Module):
             # for index in range(len(type_in_channels)):
             #     self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels, bias=False).to(device))
             self.transform_lin = torch.nn.Linear(in_channels,hidden_channels,bias=False).to(device)
+            self.trainsform_lin_bn = torch.nn.BatchNorm1d(hidden_channels).to(device)
             for layer in range(num_layers):
                 if use_multiple_gpu is True:
                     device = f"cuda:{layer % torch.cuda.device_count()}"
@@ -240,15 +241,34 @@ class SAGE(torch.nn.Module):
                 device = f"cuda:{layer % torch.cuda.device_count()}"
             else:
                 device = "cuda:0"
-            self.lin = torch.nn.Linear(hidden_channels*4,out_channels,bias=False).to(device)
+            self.fc1 = torch.nn.Linear(hidden_channels*2,hidden_channels).to(device)
+            self.bn1 = torch.nn.BatchNorm1d(hidden_channels).to(device)
+            layer = layer + 1
+            if use_multiple_gpu is True:
+                device = f"cuda:{layer % torch.cuda.device_count()}"
+            else:
+                device = "cuda:0"
+            self.fc2 = torch.nn.Linear(hidden_channels,hidden_channels).to(device)
+            self.bn2 = torch.nn.BatchNorm1d(hidden_channels).to(device)
+            layer = layer + 1
+            if use_multiple_gpu is True:
+                device = f"cuda:{layer % torch.cuda.device_count()}"
+            else:
+                device = "cuda:0"
+            self.fc3 = torch.nn.Linear(hidden_channels,out_channels).to(device)
         else:
             # for index in range(len(type_in_channels)):
             #     self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False))
             self.transform_lin = torch.nn.Linear(in_channels,hidden_channels,bias=False)
+            self.trainsform_lin_bn = torch.nn.BatchNorm1d(hidden_channels)
             for _ in range(num_layers):
                 dim_mult = 2 if self.concat and (layer != 0) else 1
                 self.convs.append(SAGEConv(dim_mult * hidden_channels, hidden_channels, concat=True, bias=bias))
-            self.lin = torch.nn.Linear(hidden_channels*4,out_channels,bias=False)
+            self.fc1 = torch.nn.Linear(hidden_channels*2,hidden_channels)
+            self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
+            self.fc2 = torch.nn.Linear(hidden_channels, hidden_channels)
+            self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
+            self.fc3 = torch.nn.Linear(hidden_channels, out_channels)
 
     def reset_parameters(self):
         # for lin in self.transform_lins:
@@ -256,7 +276,9 @@ class SAGE(torch.nn.Module):
         self.transform_lin.reset_parameters()
         for conv in self.convs:
             conv.reset_parameters()
-        self.lin.reset_parameters()
+        self.fc1.reset_parameters()
+        self.fc2.reset_parameters()
+        self.fc3.reset_parameters()
 
     # def forward(self, all_init_mats, adjs, link, n_id, all_sorted_indexes):
     def forward(self, init_mat, adjs, link, n_id):
@@ -266,6 +288,8 @@ class SAGE(torch.nn.Module):
 
             # x = torch.vstack([self.transform_lins[index](mat.to('cuda:0')) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
             x = self.transform_lin(init_mat.to('cuda:0'))[n_id]
+            x = self.trainsform_lin_bn(x)
+            x = F.elu(x)
             for i, (edge_index, size) in enumerate(adjs):
                 if self.use_multiple_gpu is True:
                     device = f"cuda:{i % torch.cuda.device_count()}"
@@ -287,11 +311,23 @@ class SAGE(torch.nn.Module):
             else:
                 x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]],:],x[[torch.where(n_id==i)[0][0] for i in link[:,1]],:]], dim=1)
             x = x.to(device)
-            x = self.lin(x).squeeze(1) 
+
+            ## fully connected layers
+            x = self.fc1(x)
+            x = self.bn1(x)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
+            x = self.fc2(x)
+            x = self.bn2(x)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
+            x = self.f3(x).squeeze(1)
 
         else:
             # x = torch.vstack([self.transform_lins[index](mat) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
             x = self.transform_lin(init_mat)[n_id]
+            x = self.trainsform_lin_bn(x)
+            x = F.elu(x)
             for i, (edge_index, size) in enumerate(adjs):
                 x_target = x[:size[1]]
                 x = self.convs[i]((x, x_target), edge_index)
@@ -302,7 +338,17 @@ class SAGE(torch.nn.Module):
                 x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]]].view(1,-1),x[[torch.where(n_id==i)[0][0] for i in link[:,1]]].view(1,-1)], dim=1)
             else:
                 x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]],:],x[[torch.where(n_id==i)[0][0] for i in link[:,1]],:]], dim=1)
-            x = self.lin(x).squeeze(1)   
+
+            ## fully connected layers
+            x = self.fc1(x)
+            x = self.bn1(x)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
+            x = self.fc2(x)
+            x = self.bn2(x)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
+            x = self.f3(x).squeeze(1) 
 
         return x
 
@@ -323,6 +369,7 @@ class GAT(torch.nn.Module):
             # for index in range(len(type_in_channels)):
             #     self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False).to(device))
             self.transform_lin = torch.nn.Linear(in_channels,hidden_channels,bias=False).to(device)
+            self.trainsform_lin_bn = torch.nn.BatchNorm1d(hidden_channels).to(device)
             for layer in range(num_layers):
                 if use_multiple_gpu is True:
                     device = f"cuda:{layer % torch.cuda.device_count()}"
@@ -334,21 +381,33 @@ class GAT(torch.nn.Module):
                 device = f"cuda:{layer % torch.cuda.device_count()}"
             else:
                 device = "cuda:0"
-            self.lin1 = torch.nn.Linear(hidden_channels*2,hidden_channels,bias=False).to(device)
+            self.fc1 = torch.nn.Linear(hidden_channels*2,hidden_channels).to(device)
+            self.bn1 = torch.nn.BatchNorm1d(hidden_channels).to(device)
             layer = layer + 1
             if use_multiple_gpu is True:
                 device = f"cuda:{layer % torch.cuda.device_count()}"
             else:
                 device = "cuda:0"
-            self.lin2 = torch.nn.Linear(hidden_channels,out_channels,bias=False).to(device)
+            self.fc2 = torch.nn.Linear(hidden_channels,hidden_channels).to(device)
+            self.bn2 = torch.nn.BatchNorm1d(hidden_channels).to(device)
+            layer = layer + 1
+            if use_multiple_gpu is True:
+                device = f"cuda:{layer % torch.cuda.device_count()}"
+            else:
+                device = "cuda:0"
+            self.fc3 = torch.nn.Linear(hidden_channels,out_channels).to(device)
         else:
             # for index in range(len(type_in_channels)):
             #     self.transform_lins.append(torch.nn.Linear(type_in_channels[index],hidden_channels,bias=False))
             self.transform_lin = torch.nn.Linear(in_channels,hidden_channels,bias=False)
+            self.trainsform_lin_bn = torch.nn.BatchNorm1d(hidden_channels)
             for _ in range(num_layers):
                 self.convs.append(GATConv(hidden_channels, hidden_channels, heads=num_head, dropout=dropout_p, concat=False, bias=bias))
-            self.lin1 = torch.nn.Linear(hidden_channels*2,hidden_channels,bias=False)
-            self.lin2 = torch.nn.Linear(hidden_channels,out_channels,bias=False)
+            self.fc1 = torch.nn.Linear(hidden_channels*2,hidden_channels)
+            self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
+            self.fc2 = torch.nn.Linear(hidden_channels, hidden_channels)
+            self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
+            self.fc3 = torch.nn.Linear(hidden_channels, out_channels)
 
     def reset_parameters(self):
         # for lin in self.transform_lins:
@@ -356,8 +415,9 @@ class GAT(torch.nn.Module):
         self.transform_lin.reset_parameters()
         for conv in self.convs:
             conv.reset_parameters()
-        self.lin1.reset_parameters()
-        self.lin2.reset_parameters()
+        self.fc1.reset_parameters()
+        self.fc2.reset_parameters()
+        self.fc3.reset_parameters()
 
     # def forward(self, all_init_mats, adjs, link, n_id, all_sorted_indexes, return_attention=False):
     def forward(self, init_mat, adjs, link, n_id, return_attention=False):
@@ -369,6 +429,8 @@ class GAT(torch.nn.Module):
 
             # x = torch.vstack([self.transform_lins[index](mat.to('cuda:0')) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
             x = self.transform_lin(init_mat.to('cuda:0'))[n_id]
+            x = self.trainsform_lin_bn(x)
+            x = F.elu(x)
             for i, (edge_index, size) in enumerate(adjs):
                 if self.use_multiple_gpu is True:
                     device = f"cuda:{i % torch.cuda.device_count()}"
@@ -396,11 +458,23 @@ class GAT(torch.nn.Module):
                 x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]],:],x[[torch.where(n_id==i)[0][0] for i in link[:,1]],:]], dim=1)
             x = x.to(device)
 #             x = torch.sigmoid(self.lin(x)).squeeze(1)
-            x = self.lin2(F.dropout(F.elu(self.lin1(x)), p=self.dropout_p, training=self.training)).squeeze(1) 
+
+            ## fully connected layers
+            x = self.fc1(x)
+            x = self.bn1(x)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
+            x = self.fc2(x)
+            x = self.bn2(x)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
+            x = self.f3(x).squeeze(1)
 
         else:
             # x = torch.vstack([self.transform_lins[index](mat) for index, mat in enumerate(all_init_mats)])[all_sorted_indexes][n_id]
             x = self.transform_lin(init_mat)[n_id]
+            x = self.trainsform_lin_bn(x)
+            x = F.elu(x)
             for i, (edge_index, size) in enumerate(adjs):
                 x_target = x[:size[1]]
                 if return_attention:
@@ -417,6 +491,16 @@ class GAT(torch.nn.Module):
             else:
                 x = torch.cat([x[[torch.where(n_id==i)[0][0] for i in link[:,0]],:],x[[torch.where(n_id==i)[0][0] for i in link[:,1]],:]], dim=1)
 #             x = torch.sigmoid(self.lin(x)).squeeze(1)
-            x = self.lin2(F.dropout(F.elu(self.lin1(x)), p=self.dropout_p, training=self.training)).squeeze(1) 
+
+            ## fully connected layers
+            x = self.fc1(x)
+            x = self.bn1(x)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
+            x = self.fc2(x)
+            x = self.bn2(x)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
+            x = self.f3(x).squeeze(1)
 
         return x
