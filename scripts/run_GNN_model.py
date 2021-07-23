@@ -55,7 +55,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
         if use_gpu is True:
             with amp.autocast(enabled=True): # use mixed precision training
                 pred_y= model(init_mat, adjs, link, n_id).to(device)
-                train_loss = criterion(pred_y, y)
+                train_loss = criterion(pred_y, y.long())
                 all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
                 all_y = torch.cat([all_y, y.cpu().detach()])
         
@@ -71,7 +71,7 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
             scaler.update()
         else:
             pred_y= model(init_mat, adjs, link, n_id).to(device)
-            train_loss = criterion(pred_y, y)
+            train_loss = criterion(pred_y, y.long())
             all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
             all_y = torch.cat([all_y, y.cpu().detach()])
             train_loss.backward()
@@ -112,12 +112,12 @@ def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val
             if use_gpu is True:
                 with amp.autocast(enabled=True): # use mixed precision training
                     pred_y= model(init_mat, adjs, link, n_id).to(device)
-                    val_loss = criterion(pred_y, y)
+                    val_loss = criterion(pred_y, y.long())
                     all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
                     all_y = torch.cat([all_y, y.cpu().detach()])
             else:
                 pred_y= model(init_mat, adjs, link, n_id).to(device)
-                val_loss = criterion(pred_y, y)
+                val_loss = criterion(pred_y, y.long())
                 all_pred = torch.cat([all_pred,softmax(pred_y).cpu().detach()])
                 all_y = torch.cat([all_y, y.cpu().detach()])
 
@@ -181,9 +181,11 @@ def evaluate(loader, use_gpu, batch_data, calculate_metric=True):
         ## calculate one-vs-one AUC
         ovo_auc_score = met.roc_auc_score(labels, probas, multi_class='ovo')
         ## calculate macro AP (average precision) score
-        macro_ap_score = met.average_precision_score(labels, probas, average='macro')
+        # macro_ap_score = met.average_precision_score(labels, probas, average='macro')
         ## calculate micro AP (average precision) score
-        micro_ap_score = met.average_precision_score(labels, probas, average='micro')
+        # micro_ap_score = met.average_precision_score(labels, probas, average='micro')
+        macro_ap_score = 0
+        micro_ap_score = 0
     
         # plot_data = dict()
         # ## generate Receiver operating characteristic (ROC) curve plot data
