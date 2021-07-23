@@ -65,7 +65,7 @@ def calculate_hitk(drug_disease_pairs, k=1):
     tp_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==0,:].reset_index(drop=True)
     random_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
 
-    Q_n = len(drug_disease_pairs)
+    Q_n = len(tp_pairs)
     count = 0
     for index in range(Q_n):
         query_drug = tp_pairs['source'][index]
