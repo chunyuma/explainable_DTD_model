@@ -10,6 +10,13 @@ import numpy as np
 from sklearn.metrics import f1_score
 plt.switch_backend('agg')
 
+def set_random_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
 def calculate_f1score(preds, labels, average='macro'):
     preds = np.array(preds)
     y_pred_tags = np.argmax(preds, axis=1) 
@@ -31,14 +38,14 @@ def calculate_mrr(drug_disease_pairs):
     '''
     
     ## only use tp pairs
-    drug_disease_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==0,:].reset_index(drop=True)
+    tp_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==0,:].reset_index(drop=True)
     random_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
 
-    Q_n = len(drug_disease_pairs)
+    Q_n = len(tp_pairs)
     score = 0
     for index in range(Q_n):
-        query_drug = drug_disease_pairs['source'][index]
-        this_query_score = drug_disease_pairs['prob'][index]
+        query_drug = tp_pairs['source'][index]
+        this_query_score = tp_pairs['prob'][index]
         all_random_probs_for_this_query = list(random_pairs.loc[random_pairs['source'].isin([query_drug]),'prob'])
         all_in_list = [this_query_score] + all_random_probs_for_this_query
         rank = list(tensor(all_in_list).sort(descending=True).indices.numpy()).index(0)+1
@@ -55,14 +62,14 @@ def calculate_hitk(drug_disease_pairs, k=1):
     '''
     
     ## only use tp pairs
-    drug_disease_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==0,:].reset_index(drop=True)
+    tp_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==0,:].reset_index(drop=True)
     random_pairs = drug_disease_pairs.loc[drug_disease_pairs['y']==1,:].reset_index(drop=True)
 
-    Q_n = len(drug_disease_pairs)
+    Q_n = len(tp_pairs)
     count = 0
     for index in range(Q_n):
-        query_drug = drug_disease_pairs['source'][index]
-        this_query_score = drug_disease_pairs['prob'][index]
+        query_drug = tp_pairs['source'][index]
+        this_query_score = tp_pairs['prob'][index]
         all_random_probs_for_this_query = list(random_pairs.loc[random_pairs['source'].isin([query_drug]),'prob'])
         all_in_list = [this_query_score] + all_random_probs_for_this_query
         rank = list(tensor(all_in_list).sort(descending=True).indices.numpy()).index(0)+1

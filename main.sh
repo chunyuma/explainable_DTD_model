@@ -13,5 +13,9 @@ python ${work_folder}/scripts/generate_tp_tn_pairs.py --use_input_training_edges
 
 # # step3: train GNN model
 echo 'running step3: train GNN model'
+<<<<<<< HEAD
 /usr/bin/time -v python ${work_folder}/scripts/run_GNN_model.py --run_model "GAT" --data_path ${work_folder}/data --use_known_embedding --run_mode 1 --num_epochs 600 --learning_ratio 0.001 --use_gpu --num_head 1 --init_emb_size 512 --emb_size 128 --num_layers 2 --batch_size 500 --mrr_hk_n 500 --patience 10 --factor 0.1 --print_every 20 --train_val_test_size "[0.8, 0.1, 0.1]" --dropout_p 0 --output_folder ${work_folder}/results/
 CUDA_VISIBLE_DEVICES=1 python scripts/run_GNN_model.py --run_model "GAT" --data_path data --use_known_embedding --run_mode 1 --num_epochs 600 --learning_ratio 0.001 --use_gpu --num_head 1 --init_emb_size 100 --emb_size 128 --num_layers 2 --batch_size 500 --mrr_hk_n 500 --patience 10 --factor 0.1 --print_every 20 --train_val_test_size "[0.8, 0.1, 0.1]" --dropout_p 0 --output_folder results/
+=======
+/usr/bin/time -v python ${work_folder}/scripts/run_GNN_model.py --run_model "GAT" --data_path ${work_folder}/data --use_known_embedding --run_mode 1 --num_epochs 600 --learning_ratio 0.001 --use_gpu --num_head 1 --init_emb_size 512 --emb_size 128 --num_layers 2 --batch_size 500 --mrr_hk_n 500 --patience 10 --factor 0.1 --print_every 20 --train_val_test_size "[0.8, 0.1, 0.1]" --dropout_p 0 --output_folder ${work_folder}/results/ --train_N 30 --non_train_N 500
+>>>>>>> 66b57ecfcef9fdb4545bcf29a79258fea86657e8

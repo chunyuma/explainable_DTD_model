@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import pickle
 import argparse
 import torch.cuda.amp as amp
-from utils import calculate_acc, format_time, plot_cutoff, calculate_f1score, calculate_mrr, calculate_hitk
+from utils import set_random_seed, calculate_acc, format_time, plot_cutoff, calculate_f1score, calculate_mrr, calculate_hitk
 import time
 import gc
 import sklearn.metrics as met
@@ -253,7 +253,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_known_embedding", action="store_true", help="Use known inital embeeding", default=False)
     parser.add_argument("--num_epochs", type=int, help="Number of epochs to train model", default=50)
     parser.add_argument("--Kfold", type=int, help="Number of fold", default=10)
-    parser.add_argument("--mrr_hk_n", type=int, help="Number of random pair for MRR and H@K", default=500)
+    parser.add_argument("--train_N", type=int, help="Number of random pairs for each unique tp drugs in train set", default=30)
+    parser.add_argument("--non_train_N", type=int, help="Number of random pairs for each unique tp drugs in non train set", default=30)
     parser.add_argument("--n_random_pairs", type=int, help="Number of random pairs for mode 3", default=20000)
     parser.add_argument("--emb_size", type=int, help="Embedding vertor dimension", default=512)
     parser.add_argument("--batch_size", type=int, help="Batch size of training data", default=512)
@@ -280,7 +281,7 @@ if __name__ == "__main__":
     else:
         known_int_emb_dict = None
     
-    torch.manual_seed(args.seed)
+    set_random_seed(args.seed)
     run_model = args.run_model.lower()
     num_epochs = args.num_epochs
     batch_size = args.batch_size
@@ -297,7 +298,8 @@ if __name__ == "__main__":
     early_stop_n = args.early_stop_n
     Kfold = args.Kfold
     n_random_pairs = args.n_random_pairs
-    mrr_hk_n = args.mrr_hk_n
+    train_N = args.train_N
+    non_train_N = args.non_train_N
     use_concat = args.use_concat
     if args.num_samples == "None":
         num_samples = None
@@ -330,7 +332,7 @@ if __name__ == "__main__":
         else:
             processdata_path = os.path.join(args.data_path, f'GraphSage_ProcessedDataset_initemb{init_emb_size}_batch{batch_size}_layer{num_layers}_neighbors{"+".join([str(num) for num in num_samples])}')
         print('Start pre-processing data', flush=True)
-        dataset = ProcessedDataset(root=processdata_path, run_model=run_model, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, all_known_tp_pairs=all_known_tp_pairs, train_val_test_size=train_val_test_size, batch_size=batch_size, layers=num_layers, dim=init_emb_size, known_int_emb_dict=known_int_emb_dict, N=mrr_hk_n, num_samples=num_samples)
+        dataset = ProcessedDataset(root=processdata_path, run_model=run_model, raw_edges=raw_edges, node_info=node_info, tp_pairs=tp_pairs, tn_pairs=tn_pairs, all_known_tp_pairs=all_known_tp_pairs, train_val_test_size=train_val_test_size, batch_size=batch_size, layers=num_layers, dim=init_emb_size, known_int_emb_dict=known_int_emb_dict, train_N=train_N, non_train_N=non_train_N, num_samples=num_samples, seed=args.seed)
         print('Pre-processing data completed', flush=True)
         del raw_edges, node_info, tp_pairs, tn_pairs, all_known_tp_pairs ## remove the unused varaibles to release memory
         if args.use_known_embedding:
