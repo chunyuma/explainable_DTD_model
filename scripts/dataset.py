@@ -31,18 +31,19 @@ class ProcessedDataset(InMemoryDataset):
         self.dim = dim
         self.known_int_emb_dict = known_int_emb_dict
         self.train_val_test_size = train_val_test_size
-        self.N = N
+        self.train_N = train_N
+        self.non_train_N = non_train_N
         self.worker = 4 #multiprocessing.cpu_count()
         self.seed = seed
 
         self.layer_size = [1000, 1000, 1000, 1000]
 
-        self.layer_size = []
-        if run_model == 'gat' and num_samples is None:
-            for _ in range(layers):
-                self.layer_size += [-1]
-        else:
-            self.layer_size = num_samples
+        # self.layer_size = []
+        # if run_model == 'gat' and num_samples is None:
+        #     for _ in range(layers):
+        #         self.layer_size += [-1]
+        # else:
+        #     self.layer_size = num_samples
 
         super(ProcessedDataset, self).__init__(root, transform, pre_transform)
 
@@ -114,8 +115,7 @@ class ProcessedDataset(InMemoryDataset):
 
     @staticmethod
     def _rand_rate(n, test_pairs, disease_list, idx_map, all_known_tp_pairs):
-
-        random.seed(int(self.seed))
+        # random.seed(int(self.seed))
         idtoname = {value:key for key, value in idx_map.items()}
         ## only use the tp data
         test_pairs = test_pairs.loc[test_pairs['y'] == 0,:].reset_index(drop=True)
@@ -184,9 +184,9 @@ class ProcessedDataset(InMemoryDataset):
         print("", flush=True)
         print(f"generate random pairs for MRR or Hit@K evaluation", flush=True)
         disease_list = list(set([node_id for node_id, node_type in id_to_type.items() if node_type=='biolink:Disease' or node_type=='biolink:PhenotypicFeature' or node_type=='biolink:DiseaseOrPhenotypicFeature']))
-        train_random_pairs = self._rand_rate(20, train_pairs, disease_list, idx_map, self.all_known_tp_pairs)
-        val_random_pairs = self._rand_rate(20, val_pairs, disease_list, idx_map, self.all_known_tp_pairs)
-        test_random_pairs = self._rand_rate(self.N, test_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        train_random_pairs = self._rand_rate(self.train_N, train_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        val_random_pairs = self._rand_rate(self.train_N, val_pairs, disease_list, idx_map, self.all_known_tp_pairs)
+        test_random_pairs = self._rand_rate(self.non_train_N, test_pairs, disease_list, idx_map, self.all_known_tp_pairs)
 
         
         ## split training set according to the given batch size
