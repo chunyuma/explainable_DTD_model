@@ -36,14 +36,14 @@ class ProcessedDataset(InMemoryDataset):
         self.worker = 4 #multiprocessing.cpu_count()
         self.seed = seed
 
-        self.layer_size = [1000, 1000, 1000, 1000]
+        # self.layer_size = [1000, 1000, 1000, 1000]
 
-        # self.layer_size = []
-        # if run_model == 'gat' and num_samples is None:
-        #     for _ in range(layers):
-        #         self.layer_size += [-1]
-        # else:
-        #     self.layer_size = num_samples
+        self.layer_size = []
+        if run_model == 'gat' and num_samples is None:
+            for _ in range(layers):
+                self.layer_size += [-1]
+        else:
+            self.layer_size = num_samples
 
         super(ProcessedDataset, self).__init__(root, transform, pre_transform)
 

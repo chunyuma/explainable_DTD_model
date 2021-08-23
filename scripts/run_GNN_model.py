@@ -16,6 +16,8 @@ import gc
 import sklearn.metrics as met
 import scipy as sci
 import matplotlib.pyplot as plt
+from transformers.optimization import get_linear_schedule_with_warmup
+
 plt.switch_backend('agg')
 
 def train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val_batch):
@@ -366,7 +368,9 @@ if __name__ == "__main__":
         all_init_mats = [init_emb[key][0] for key,value in init_emb.items()]
         init_mat = torch.vstack([mat for _, mat in enumerate(all_init_mats)])[all_sorted_indexes]
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, threshold=0.0001, threshold_mode='rel')
+        total_steps = 37400
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(total_steps * 0.1),num_training_steps=total_steps)
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, threshold=0.0001, threshold_mode='rel')
         softmax = torch.nn.Softmax(dim=1)
         if use_gpu:
             scaler = amp.GradScaler(enabled=True) # scaler for mixed precision training
@@ -383,7 +387,8 @@ if __name__ == "__main__":
             if count > early_stop_n:
                 break
             train_loss, train_acc, val_loss, val_acc = train(epoch, use_gpu, num_epochs, train_loader, train_batch, val_loader, val_batch)
-            scheduler.step(val_loss)
+            scheduler.step()
+            # scheduler.step(val_loss)
             all_train_loss += [train_loss]
             all_val_loss += [val_loss]
             writer.add_scalars('Loss', {'train': train_loss, 'val': val_loss}, epoch)
